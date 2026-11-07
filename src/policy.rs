@@ -186,12 +186,62 @@ pub struct PolicyInput<'a> {
     pub overrides: &'a BTreeMap<String, DateTime<Utc>>,
 }
 
+/// Subscription-level evidence: connections that share one subscription (for example grok-cli and xai-oauth) must
+/// be held and released together, so each is judged on the WORST reading any sibling reports per window, with the
+/// OLDEST observation time. A sibling that reports nothing inherits its siblings' readings; a lone connection is
+/// unchanged. This removes the "one row held, the other keeps serving" partial-hold gap.
+fn merge_siblings(conns: &[ConnInput]) -> Vec<ConnInput> {
+    let mut by_sub: BTreeMap<&str, BTreeMap<WindowKind, WindowObs>> = BTreeMap::new();
+    let mut burn: BTreeMap<&str, BTreeMap<WindowKind, f64>> = BTreeMap::new();
+    for c in conns {
+        let m = by_sub.entry(c.subscription.as_str()).or_default();
+        for o in &c.obs {
+            match m.get_mut(&o.kind) {
+                Some(cur) => {
+                    let oldest = cur.observed_at.min(o.observed_at);
+                    if o.used_pct > cur.used_pct {
+                        *cur = o.clone();
+                    }
+                    cur.observed_at = oldest;
+                }
+                None => {
+                    m.insert(o.kind, o.clone());
+                }
+            }
+        }
+        let b = burn.entry(c.subscription.as_str()).or_default();
+        for (k, v) in &c.burn {
+            let e = b.entry(*k).or_insert(0.0);
+            if *v > *e {
+                *e = *v;
+            }
+        }
+    }
+    conns
+        .iter()
+        .map(|c| {
+            let mut n = c.clone();
+            let merged = &by_sub[c.subscription.as_str()];
+            if !merged.is_empty() {
+                n.obs = merged
+                    .values()
+                    .map(|o| WindowObs { provider: c.conn.provider.clone(), connection_id: c.conn.id.clone(), group: None, ..o.clone() })
+                    .collect();
+                n.unavailable = None;
+            }
+            n.burn = burn[c.subscription.as_str()].clone();
+            n
+        })
+        .collect()
+}
+
 pub fn decide(inp: &PolicyInput) -> Vec<Action> {
     let (now, th) = (inp.now, inp.th);
     let mut out: Vec<Action> = Vec::new();
     let mut held_conns: Vec<&str> = Vec::new();
+    let merged = merge_siblings(inp.conns);
 
-    for c in inp.conns {
+    for c in &merged {
         let id = c.conn.id.as_str();
         let hold = inp.holds.iter().find(|h| h.connection_id == id);
         let marker = marker::read(&c.conn.provider_specific_data);
@@ -212,7 +262,7 @@ pub fn decide(inp: &PolicyInput) -> Vec<Action> {
 
     // All subscriptions held => only free/local rungs remain; make that explicit (spec capacity floor).
     let mut subs: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-    for c in inp.conns {
+    for c in &merged {
         let e = subs.entry(c.subscription.as_str()).or_default();
         e.0 += 1;
         if held_conns.contains(&c.conn.id.as_str()) {
@@ -622,6 +672,60 @@ mod tests {
         let Some(Action::Retarget { max_until, .. }) = a.iter().find(|x| matches!(x, Action::Retarget { .. })) else { panic!("no retarget") };
         let cap = h.placed_at + Duration::hours(5) + Duration::minutes(5) + Duration::hours(2);
         assert!(*max_until <= cap, "{max_until} > {cap}");
+    }
+    fn ci_n(id: &str, sub: &str, active: bool, psd: serde_json::Value, obs: Vec<WindowObs>) -> ConnInput {
+        let mut c = ci(active, psd, obs);
+        c.conn.id = id.into();
+        c.subscription = sub.into();
+        c
+    }
+    fn holds_for(a: &[Action]) -> Vec<String> {
+        let mut v: Vec<String> = a.iter().filter_map(|x| if let Action::Hold { conn_id, .. } = x { Some(conn_id.clone()) } else { None }).collect();
+        v.sort();
+        v
+    }
+    #[test]
+    fn siblings_of_one_subscription_are_held_together_even_if_only_one_reports_high() {
+        let hi = vec![ob(WindowKind::Weekly, 95.0, 3000, 1)];
+        let lo = vec![ob(WindowKind::Weekly, 40.0, 3000, 1)];
+        let a = run(vec![ci_n("g1", "grok", true, json!({}), hi), ci_n("g2", "grok", true, json!({}), lo)], vec![]);
+        assert_eq!(holds_for(&a), vec!["g1".to_string(), "g2".to_string()]);
+    }
+    #[test]
+    fn sibling_without_usage_inherits_the_other_siblings_reading() {
+        let hi = vec![ob(WindowKind::Weekly, 95.0, 3000, 1)];
+        let mut none = ci_n("g2", "grok", true, json!({}), vec![]);
+        none.unavailable = Some("Usage not available".into());
+        let a = run(vec![ci_n("g1", "grok", true, json!({}), hi), none], vec![]);
+        assert_eq!(holds_for(&a), vec!["g1".to_string(), "g2".to_string()]);
+        assert!(!has(&a, |x| matches!(x, Action::Alert { kind: AlertKind::EvidenceMissing, .. })));
+    }
+    #[test]
+    fn different_subscriptions_never_influence_each_other() {
+        let hi = vec![ob(WindowKind::Weekly, 95.0, 3000, 1)];
+        let lo = vec![ob(WindowKind::Weekly, 10.0, 3000, 1)];
+        let a = run(vec![ci_n("c1", "claude", true, json!({}), hi), ci_n("x1", "chatgpt", true, json!({}), lo)], vec![]);
+        assert_eq!(holds_for(&a), vec!["c1".to_string()]);
+    }
+    #[test]
+    fn siblings_release_together_on_worst_case_fresh_evidence() {
+        let h1 = HoldRow { connection_id: "g1".into(), id: "h1".into(), ..hold(WindowKind::Weekly, Some(-30), 4000, true, true) };
+        let h2 = HoldRow { connection_id: "g2".into(), id: "h2".into(), ..hold(WindowKind::Weekly, Some(-30), 4000, true, true) };
+        let lo = || vec![ob(WindowKind::Weekly, 3.0, 9000, 1)];
+        let a = run(vec![ci_n("g1", "grok", false, marker_psd("h1"), lo()), ci_n("g2", "grok", false, marker_psd("h2"), lo())], vec![h1.clone(), h2.clone()]);
+        assert_eq!(a.iter().filter(|x| matches!(x, Action::Release { reenable: true, .. })).count(), 2);
+        // if ONE sibling still reports high after the reset, NEITHER is released
+        let a = run(vec![ci_n("g1", "grok", false, marker_psd("h1"), lo()), ci_n("g2", "grok", false, marker_psd("h2"), vec![ob(WindowKind::Weekly, 95.0, 9000, 1)])], vec![h1, h2]);
+        assert!(!has(&a, |x| matches!(x, Action::Release { .. })));
+    }
+    #[test]
+    fn user_override_of_one_sibling_does_not_release_the_other() {
+        let h1 = HoldRow { connection_id: "g1".into(), id: "h1".into(), ..hold(WindowKind::Weekly, Some(3000), 400, true, true) };
+        let h2 = HoldRow { connection_id: "g2".into(), id: "h2".into(), ..hold(WindowKind::Weekly, Some(3000), 400, true, true) };
+        let hi = || vec![ob(WindowKind::Weekly, 95.0, 3000, 1)];
+        let a = run(vec![ci_n("g1", "grok", true, marker_psd("h1"), hi()), ci_n("g2", "grok", false, marker_psd("h2"), hi())], vec![h1, h2]);
+        assert!(has(&a, |x| matches!(x, Action::ManualOverride { conn_id, .. } if conn_id == "g1")));
+        assert!(!has(&a, |x| matches!(x, Action::Release { conn_id, .. } if conn_id == "g2")));
     }
     #[test]
     fn user_reenable_is_manual_override_not_fought() {

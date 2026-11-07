@@ -54,7 +54,10 @@ pub struct Config {
     pub gateway_url: String,
     pub key_file: String,
     pub state_dir: String,
-    pub smtp_file: String,
+    /// KEY=VALUE file holding RESEND_API_KEY (0600).
+    pub mail_env_file: String,
+    pub mail_from: String,
+    pub mail_to: String,
     pub thresholds: Thresholds,
     /// gateway provider id -> subscription name. Providers not listed are never managed (free/local rungs).
     pub subscriptions: BTreeMap<String, String>,
@@ -81,7 +84,9 @@ impl Default for Config {
             gateway_url: "http://localhost:20128".into(),
             key_file: "~/.dsh/secrets/omniroute-mcp.env".into(),
             state_dir: "~/.dsh/state/quota-sentinel".into(),
-            smtp_file: "~/.dsh/secrets/quota-sentinel-smtp.env".into(),
+            mail_env_file: "~/.dsh/.env".into(),
+            mail_from: "DSH <onboarding@resend.dev>".into(),
+            mail_to: "rachit.dev@gmail.com".into(),
             thresholds: Thresholds::default(),
             subscriptions: subs,
         }

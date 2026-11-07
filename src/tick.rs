@@ -148,15 +148,18 @@ mod tests {
         assert_eq!(l.open_holds().unwrap().len(), 1);
     }
     #[test]
-    fn subscription_in_live_list_but_connection_not_allowlisted_is_never_written() {
+    fn non_allowlisted_sibling_is_never_written_but_its_reading_protects_the_allowlisted_one() {
         let (g, l) = rig();
         g.add("c2", "claude", true); // same subscription, NOT allowlisted
         g.usage.borrow_mut().insert("c1".into(), usage(10.0, 3000));
         g.usage.borrow_mut().insert("c2".into(), usage(99.0, 3000));
         let r = run_tick(&cfg(true), &g, &l, now()).unwrap();
+        // c2 (not allowlisted) is only ever shadowed
         assert!(r.results.iter().any(|(a, o)| matches!(a, Action::Hold { conn_id, .. } if conn_id == "c2") && *o == Outcome::Shadow));
         assert_eq!(g.get("c2")["isActive"], json!(true));
-        assert!(g.patches.borrow().is_empty());
+        assert!(g.patches.borrow().iter().all(|(id, _)| id == "c1"), "only the allowlisted connection is ever written");
+        // c1 is held because the SUBSCRIPTION is exhausted according to its sibling
+        assert_eq!(g.get("c1")["isActive"], json!(false));
     }
     #[test]
     fn restart_while_held_recovers_from_ledger_and_gateway_state_alone() {

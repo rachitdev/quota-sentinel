@@ -76,9 +76,9 @@ fn main() -> Result<()> {
             if dry {
                 println!("Subject: {}\n\n{}", r.subject, r.text);
             } else {
-                let smtp = mail::load(&config::expand(&cfg.smtp_file))?;
-                mail::send(&smtp, &r.subject, &r.text, &r.html)?;
-                println!("sent: {}", r.subject);
+                let m = mail::load(&config::expand(&cfg.mail_env_file), &cfg.mail_from, &cfg.mail_to)?;
+                let id = mail::send(&m, &r.subject, &r.text, &r.html)?;
+                println!("sent via Resend (id {id}): {}", r.subject);
             }
         }
         Cmd::Release { hold_id } => {

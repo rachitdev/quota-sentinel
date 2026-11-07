@@ -1,113 +1,139 @@
-//! SMTP sender (lettre). Credentials live in a 0600 file under ~/.dsh/secrets, never in config or the ledger.
-use anyhow::{bail, Context, Result};
-use lettre::message::{header::ContentType, MultiPart, SinglePart};
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, SmtpTransport, Transport};
+//! Daily-report delivery through the Resend HTTP API (same mechanism as ~/.dsh/bin/decision-forge-trial-report).
+//! The API key is read from a 0600 env file (default ~/.dsh/.env); it is never logged or stored in the ledger.
+use anyhow::{anyhow, bail, Context, Result};
+use serde_json::json;
 use std::path::Path;
+use std::time::Duration;
+
+pub const RESEND_BASE: &str = "https://api.resend.com";
 
 #[derive(Debug, Clone)]
-pub struct Smtp {
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub pass: String,
+pub struct Resend {
+    pub key: String,
     pub from: String,
     pub to: String,
-    /// "starttls" (587), "tls" (465) or "plain" (tests only, loopback)
-    pub security: String,
+    pub base: String,
 }
 
-/// KEY=VALUE file: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO, SMTP_SECURITY.
-pub fn load(path: &Path) -> Result<Smtp> {
+/// Read RESEND_API_KEY from a KEY=VALUE file. Refuses a file readable by group/others (it holds secrets).
+pub fn load(env_file: &Path, from: &str, to: &str) -> Result<Resend> {
     use std::os::unix::fs::PermissionsExt;
-    let meta = std::fs::metadata(path).with_context(|| format!("missing SMTP credentials file {}", path.display()))?;
+    let meta = std::fs::metadata(env_file).with_context(|| format!("missing env file {}", env_file.display()))?;
     if meta.permissions().mode() & 0o077 != 0 {
-        bail!("{} holds a password and must be chmod 600", path.display());
+        bail!("{} holds secrets and must be chmod 600", env_file.display());
     }
-    let text = std::fs::read_to_string(path)?;
-    let get = |k: &str| text.lines().filter_map(|l| l.trim().strip_prefix(&format!("{k}="))).next().map(|v| v.trim().trim_matches(['\'', '"']).to_string());
-    let user = get("SMTP_USER").unwrap_or_default();
-    Ok(Smtp {
-        host: get("SMTP_HOST").unwrap_or_else(|| "smtp.gmail.com".into()),
-        port: get("SMTP_PORT").and_then(|p| p.parse().ok()).unwrap_or(587),
-        pass: get("SMTP_PASS").unwrap_or_default().replace(' ', ""),
-        from: get("MAIL_FROM").unwrap_or_else(|| user.clone()),
-        to: get("MAIL_TO").unwrap_or_else(|| user.clone()),
-        security: get("SMTP_SECURITY").unwrap_or_else(|| "starttls".into()),
-        user,
-    })
+    let text = std::fs::read_to_string(env_file)?;
+    let key = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("RESEND_API_KEY="))
+        .map(|v| v.trim().trim_matches(['\'', '"']).to_string())
+        .find(|v| !v.is_empty())
+        .ok_or_else(|| anyhow!("RESEND_API_KEY not found in {}", env_file.display()))?;
+    Ok(Resend { key, from: from.into(), to: to.into(), base: RESEND_BASE.into() })
 }
 
-pub fn send(s: &Smtp, subject: &str, text: &str, html: &str) -> Result<()> {
-    let msg = Message::builder()
-        .from(s.from.parse().context("MAIL_FROM")?)
-        .to(s.to.parse().context("MAIL_TO")?)
-        .subject(subject)
-        .multipart(MultiPart::alternative().singlepart(SinglePart::builder().header(ContentType::TEXT_PLAIN).body(text.to_string())).singlepart(SinglePart::builder().header(ContentType::TEXT_HTML).body(html.to_string())))?;
-    let b = match s.security.as_str() {
-        "tls" => SmtpTransport::relay(&s.host)?,
-        "plain" => SmtpTransport::builder_dangerous(&s.host),
-        _ => SmtpTransport::starttls_relay(&s.host)?,
-    };
-    let mut b = b.port(s.port).timeout(Some(std::time::Duration::from_secs(30)));
-    if !s.user.is_empty() && s.security != "plain" {
-        b = b.credentials(Credentials::new(s.user.clone(), s.pass.clone()));
+fn redact(s: &str, key: &str) -> String {
+    if key.is_empty() { s.to_string() } else { s.replace(key, "[redacted]") }
+}
+
+/// Send one email. Success requires an `id` in Resend's reply (a 2xx without an id is treated as failure).
+pub fn send(r: &Resend, subject: &str, text: &str, html: &str) -> Result<String> {
+    if !r.base.starts_with("https://") && !r.base.starts_with("http://127.0.0.1") {
+        bail!("refusing to send the Resend key to a non-https endpoint");
     }
-    b.build().send(&msg).map(|_| ()).map_err(|e| anyhow::anyhow!("SMTP send failed: {}", e.to_string().replace(&s.pass, "[redacted]")))
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(30)))
+        .build()
+        .into();
+    let mut resp = agent
+        .post(format!("{}/emails", r.base))
+        .header("Authorization", format!("Bearer {}", r.key))
+        .send_json(json!({"from": r.from, "to": [r.to], "subject": subject, "text": text, "html": html}))
+        .map_err(|e| anyhow!("Resend request failed: {}", redact(&e.to_string(), &r.key)))?;
+    let code = resp.status().as_u16();
+    let body: serde_json::Value = resp.body_mut().read_json().unwrap_or(serde_json::Value::Null);
+    match body.get("id").and_then(|x| x.as_str()) {
+        Some(id) if (200..300).contains(&code) => Ok(id.to_string()),
+        _ => bail!("Resend rejected the message: HTTP {code} {}", redact(&body.to_string(), &r.key).chars().take(200).collect::<String>()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
 
-    /// Minimal one-shot SMTP sink; returns the DATA it received.
-    fn sink() -> (u16, std::thread::JoinHandle<String>) {
+    fn server(status: &str, body: &'static str) -> (String, std::thread::JoinHandle<String>) {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = l.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let status = status.to_string();
         let h = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
-            let mut r = BufReader::new(s.try_clone().unwrap());
-            s.write_all(b"220 sink\r\n").unwrap();
-            let (mut data, mut in_data) = (String::new(), false);
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
             loop {
-                let mut line = String::new();
-                if r.read_line(&mut line).unwrap() == 0 { break }
-                if in_data {
-                    if line == ".\r\n" { in_data = false; s.write_all(b"250 queued\r\n").unwrap(); } else { data.push_str(&line) }
-                    continue;
+                let n = s.read(&mut tmp).unwrap();
+                buf.extend_from_slice(&tmp[..n]);
+                let t = String::from_utf8_lossy(&buf).to_string();
+                if let Some(i) = t.find("\r\n\r\n") {
+                    let cl = t[..i].lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())).unwrap_or(0);
+                    if buf.len() >= i + 4 + cl { break }
                 }
-                let up = line.to_ascii_uppercase();
-                if up.starts_with("EHLO") || up.starts_with("HELO") { s.write_all(b"250 sink\r\n").unwrap() }
-                else if up.starts_with("DATA") { in_data = true; s.write_all(b"354 go\r\n").unwrap() }
-                else if up.starts_with("QUIT") { s.write_all(b"221 bye\r\n").unwrap(); break }
-                else { s.write_all(b"250 ok\r\n").unwrap() }
             }
-            data
+            write!(s, "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
+            String::from_utf8_lossy(&buf).to_string()
         });
-        (port, h)
+        (base, h)
+    }
+    fn rs(base: &str) -> Resend {
+        Resend { key: "re_secretkey123".into(), from: "DSH <onboarding@resend.dev>".into(), to: "me@example.com".into(), base: base.into() }
     }
 
     #[test]
-    fn sends_multipart_over_smtp() {
-        let (port, h) = sink();
-        let s = Smtp { host: "127.0.0.1".into(), port, user: String::new(), pass: String::new(), from: "a@example.com".into(), to: "b@example.com".into(), security: "plain".into() };
-        send(&s, "Subj", "plain body", "<b>html body</b>").unwrap();
-        let data = h.join().unwrap();
-        assert!(data.contains("Subject: Subj") && data.contains("plain body") && data.contains("html body"), "{data}");
+    fn sends_expected_request_and_returns_id() {
+        let (base, h) = server("200 OK", r#"{"id":"abc-123"}"#);
+        assert_eq!(send(&rs(&base), "Subj", "plain", "<b>h</b>").unwrap(), "abc-123");
+        let req = h.join().unwrap();
+        assert!(req.starts_with("POST /emails"), "{req}");
+        assert!(req.to_ascii_lowercase().contains("authorization: bearer re_secretkey123"));
+        let body: serde_json::Value = serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["to"], serde_json::json!(["me@example.com"]));
+        assert_eq!((body["subject"].as_str(), body["html"].as_str(), body["text"].as_str()), (Some("Subj"), Some("<b>h</b>"), Some("plain")));
+        assert_eq!(body["from"], "DSH <onboarding@resend.dev>");
     }
     #[test]
-    fn rejects_world_readable_credentials_file() {
+    fn http_error_is_failure_and_never_leaks_key() {
+        let (base, h) = server("403 Forbidden", r#"{"message":"bad key re_secretkey123"}"#);
+        let e = send(&rs(&base), "s", "t", "h").unwrap_err().to_string();
+        h.join().unwrap();
+        assert!(e.contains("403") && !e.contains("re_secretkey123"), "{e}");
+    }
+    #[test]
+    fn two_hundred_without_id_is_failure() {
+        let (base, h) = server("200 OK", r#"{"ok":true}"#);
+        assert!(send(&rs(&base), "s", "t", "h").is_err());
+        h.join().unwrap();
+    }
+    #[test]
+    fn refuses_plain_http_to_non_loopback() {
+        let mut r = rs("http://example.com");
+        assert!(send(&r, "s", "t", "h").unwrap_err().to_string().contains("non-https"));
+        r.base = "https://api.resend.com".into();
+        assert!(r.base.starts_with("https://"));
+    }
+    #[test]
+    fn env_file_must_be_private_and_contain_key() {
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("smtp.env");
-        std::fs::write(&p, "SMTP_USER=x@gmail.com\nSMTP_PASS=abcd efgh\n").unwrap();
+        let p = d.path().join(".env");
+        std::fs::write(&p, "OTHER=1\nRESEND_API_KEY=\"re_abc\"\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(load(&p).unwrap_err().to_string().contains("chmod 600"));
+        assert!(load(&p, "f", "t").unwrap_err().to_string().contains("chmod 600"));
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let s = load(&p).unwrap();
-        assert_eq!(s.pass, "abcdefgh");
-        assert_eq!((s.host.as_str(), s.port, s.to.as_str()), ("smtp.gmail.com", 587, "x@gmail.com"));
+        assert_eq!(load(&p, "f", "t").unwrap().key, "re_abc");
+        std::fs::write(&p, "OTHER=1\n").unwrap();
+        assert!(load(&p, "f", "t").unwrap_err().to_string().contains("not found"));
     }
 }
