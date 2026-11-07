@@ -97,12 +97,21 @@ impl<'a> Actuator<'a> {
                     return Ok(Outcome::Aborted(m.into()));
                 }
                 let id = new_id(self.now, conn_id);
+                // Last read immediately before the write to shrink (not close) the no-CAS race window.
                 // Ledger intent first (applied=false) so a crash between here and the write is recoverable.
                 self.ledger.insert_hold(&HoldRow {
                     id: id.clone(), connection_id: conn_id.clone(), subscription: subscription.clone(), window: *window,
                     reason: reason.clone(), prior_active: true, reset_at: *reset_at, max_until: *max_until, placed_at: self.now,
                     released_at: None, release_reason: None, applied: false,
                 })?;
+                match self.read(conn_id)? {
+                    Some(c2) if c2.is_active && marker::read(&c2.provider_specific_data).is_none() => {}
+                    _ => {
+                        let m = "connection changed between read and write; aborting (pending hold will be reconciled)";
+                        self.log(Some(conn_id), tag, Some(*window), m, false, &id);
+                        return Ok(Outcome::Aborted(m.into()));
+                    }
+                }
                 let m = QsHold { id: id.clone(), window: window.as_str().into(), reset_at: *reset_at, prior_active: true };
                 let body = json!({"isActive": false, "providerSpecificData": {marker::KEY: marker::to_value(&m)}});
                 let want = id.clone();
@@ -424,6 +433,21 @@ mod tests {
         act(&g, &l, &m, false).apply(&a).unwrap();
         assert_eq!(g.patches.borrow().len(), n, "no write on top of a competing writer");
         assert_eq!(g.get("c1")["isActive"], json!(true));
+    }
+    #[test]
+    fn user_disables_between_final_read_and_write_is_not_claimed_as_ours() {
+        let (g, l, m) = rig(true);
+        // first read (policy-time check) sees active; the competing write lands before the pre-PATCH re-read
+        let calls = std::cell::Cell::new(0);
+        let _ = &calls;
+        *g.drift.borrow_mut() = None;
+        let a = act(&g, &l, &m, false);
+        // run the first read manually, then inject drift for the second one
+        assert!(a.read("c1").unwrap().unwrap().is_active);
+        *g.drift.borrow_mut() = Some(Box::new(|c: &mut Value| c["isActive"] = json!(false)));
+        let r = a.apply(&hold_action()).unwrap();
+        assert!(matches!(r, Outcome::Aborted(_)), "{r:?}");
+        assert!(g.patches.borrow().is_empty(), "must not write on top of the user's change");
     }
     #[test]
     fn hold_never_sent_for_unmanaged_connection() {

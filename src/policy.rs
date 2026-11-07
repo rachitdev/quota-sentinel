@@ -111,6 +111,16 @@ fn evaluate(c: &ConnInput, now: DateTime<Utc>, th: &Thresholds) -> BTreeMap<Wind
     m
 }
 
+/// A refreshed reset time only counts as a change beyond jitter; otherwise we would rewrite the marker every tick
+/// and could postpone release indefinitely.
+fn reset_moved(old: Option<DateTime<Utc>>, new: Option<DateTime<Utc>>, th: &Thresholds) -> bool {
+    match (old, new) {
+        (Some(a), Some(b)) => (a - b).num_minutes().abs() > 2 * th.grace_minutes,
+        (None, Some(_)) => true,
+        _ => false,
+    }
+}
+
 fn max_until(w: WindowKind, reset: Option<DateTime<Utc>>, now: DateTime<Utc>, th: &Thresholds) -> DateTime<Utc> {
     reset.unwrap_or(now + default_len(w)) + Duration::minutes(th.grace_minutes) + Duration::hours(th.max_hold_extra_hours)
 }
@@ -218,6 +228,13 @@ fn decide_with_hold(
     if !h.applied {
         // Crash window: intent logged, not verified. Redo only while still warranted.
         if strictest_trigger(c, ev, now, th, alerts).is_some() {
+            // Active + unmarked + old is indistinguishable from "the user re-enabled it": never re-apply over that.
+            let young = now - h.placed_at <= Duration::minutes(2 * th.tick_minutes);
+            if c.conn.is_active && marker_id.is_none() && !young {
+                out.push(Action::ManualOverride { hold_id: h.id.clone(), conn_id: conn_id.clone(), until: now + Duration::hours(th.override_hours), reason: "pending hold is old and the connection is active: treating as a manual re-enable".into() });
+                alerts.push(Action::Alert { kind: AlertKind::ManualOverride, conn_id: Some(conn_id), message: format!("{}: ambiguous pending hold treated as manual override", c.subscription) });
+                return;
+            }
             out.push(Action::ResumeApply { hold_id: h.id.clone(), conn_id });
         } else {
             // reenable only takes effect if the live marker still proves the disable is ours (checked by the actuator).
@@ -228,8 +245,18 @@ fn decide_with_hold(
     }
 
     if c.conn.is_active && marker_id.is_none() {
-        // Our own release/clear landed but the ledger write did not (crash window): close the ledger, touch nothing.
-        out.push(Action::Release { hold_id: h.id.clone(), conn_id, reenable: false, reason: "release already applied; closing ledger".into() });
+        // Either our own release landed but the ledger write did not (crash window), or the user re-enabled and
+        // cleared it. Our release only ever happens on fresh, below-threshold evidence, so: if that is not true
+        // now, this was not us.
+        let ours = !ev.is_empty()
+            && ev.values().all(|e| e.fresh == Freshness::Fresh)
+            && strictest_trigger(c, ev, now, th, &mut Vec::new()).is_none();
+        if ours {
+            out.push(Action::Release { hold_id: h.id.clone(), conn_id, reenable: false, reason: "release already applied; closing ledger".into() });
+        } else {
+            out.push(Action::ManualOverride { hold_id: h.id.clone(), conn_id: conn_id.clone(), until: now + Duration::hours(th.override_hours), reason: "connection active without our marker while still exhausted: manual re-enable".into() });
+            alerts.push(Action::Alert { kind: AlertKind::ManualOverride, conn_id: Some(conn_id), message: format!("{} re-enabled manually; not re-holding for {}h", c.subscription, th.override_hours) });
+        }
         return;
     }
     if c.conn.is_active {
@@ -261,7 +288,7 @@ fn decide_with_hold(
     let needed = strictest_trigger(c, ev, now, th, alerts);
     // Escalate / refresh while the quota is still exhausted.
     if let Some(t) = &needed {
-        if t.kind > h.window || (t.kind == h.window && t.reset_at != h.reset_at && t.reset_at.is_some()) {
+        if t.kind > h.window || (t.kind == h.window && reset_moved(h.reset_at, t.reset_at, th)) {
             out.push(Action::Retarget {
                 hold_id: h.id.clone(),
                 conn_id: conn_id.clone(),
@@ -537,6 +564,40 @@ mod tests {
         let h = hold(WindowKind::FiveHour, Some(60), 20, true, true);
         let a = run(vec![ci(false, marker_psd("h1"), vec![ob(WindowKind::FiveHour, 95.0, 60, 1), ob(WindowKind::Weekly, 91.0, 4000, 1)])], vec![h]);
         assert!(has(&a, |x| matches!(x, Action::Retarget { window: WindowKind::Weekly, .. })));
+    }
+    #[test]
+    fn old_pending_hold_on_active_unmarked_connection_is_override_not_reapplied() {
+        let h = hold(WindowKind::Weekly, Some(3000), 120, false, true); // 2h old, never verified
+        let a = run(vec![ci(true, json!({}), vec![ob(WindowKind::Weekly, 95.0, 3000, 1)])], vec![h]);
+        assert!(has(&a, |x| matches!(x, Action::ManualOverride { .. })));
+        assert!(!has(&a, |x| matches!(x, Action::ResumeApply { .. })));
+    }
+    #[test]
+    fn user_reenable_and_clear_while_still_exhausted_is_override_not_ledger_close() {
+        let h = hold(WindowKind::Weekly, Some(3000), 400, true, true);
+        let a = run(vec![ci(true, json!({"qsHold": null}), vec![ob(WindowKind::Weekly, 95.0, 3000, 1)])], vec![h]);
+        assert!(has(&a, |x| matches!(x, Action::ManualOverride { .. })));
+        assert!(!has(&a, |x| matches!(x, Action::Release { .. })));
+    }
+    #[test]
+    fn active_unmarked_with_no_evidence_is_not_assumed_to_be_our_release() {
+        let h = hold(WindowKind::Weekly, Some(3000), 400, true, true);
+        let mut c = ci(true, json!({}), vec![]);
+        c.unavailable = Some("x".into());
+        let a = run(vec![c], vec![h]);
+        assert!(has(&a, |x| matches!(x, Action::ManualOverride { .. })));
+    }
+    #[test]
+    fn reset_time_jitter_does_not_retarget_but_real_move_does() {
+        let h = hold(WindowKind::Weekly, Some(3000), 400, true, true);
+        let jitter = ob(WindowKind::Weekly, 95.0, 3000, 1);
+        let mut j = jitter.clone();
+        j.reset_at = Some(now() + Duration::minutes(3000) + Duration::seconds(30));
+        let a = run(vec![ci(false, marker_psd("h1"), vec![j])], vec![h.clone()]);
+        assert!(!has(&a, |x| matches!(x, Action::Retarget { .. })));
+        let moved = ob(WindowKind::Weekly, 95.0, 3000 + 600, 1);
+        let a = run(vec![ci(false, marker_psd("h1"), vec![moved])], vec![h]);
+        assert!(has(&a, |x| matches!(x, Action::Retarget { .. })));
     }
     #[test]
     fn user_reenable_is_manual_override_not_fought() {
