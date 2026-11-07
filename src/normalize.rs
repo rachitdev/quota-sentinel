@@ -44,7 +44,15 @@ pub fn normalize(
     fetched_at: DateTime<Utc>,
 ) -> Normalized {
     let mut out = Normalized::default();
-    let top_fetched = parse_time(usage.get("fetchedAt")).unwrap_or(fetched_at);
+    // The gateway serves the last known quota flagged `_stale` while a vendor usage endpoint is rate limited
+    // (Claude does this). The data is only as fresh as `_staleSince`; without it we must assume the oldest case,
+    // never "just fetched".
+    let stale = usage.get("_stale").and_then(|x| x.as_bool()).unwrap_or(false);
+    let top_fetched = if stale {
+        parse_time(usage.get("_staleSince")).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+    } else {
+        parse_time(usage.get("fetchedAt")).unwrap_or(fetched_at)
+    };
     let push = |name: &str, w: &Value, group: Option<&str>, out: &mut Normalized| {
         let Some(kind) = WindowKind::classify(name) else {
             out.ignored.push(name.to_string());
@@ -62,7 +70,12 @@ pub fn normalize(
             group: group.map(str::to_string),
             used_pct: used,
             reset_at: parse_time(w.get("resetAt")),
-            observed_at: parse_time(w.get("observedAt")).unwrap_or(top_fetched),
+            // a per-window observedAt can never make stale data look fresher than the payload says it is
+            observed_at: match parse_time(w.get("observedAt")) {
+                Some(t) if !stale => t,
+                Some(t) => t.min(top_fetched),
+                None => top_fetched,
+            },
         });
     };
 
@@ -123,6 +136,26 @@ mod tests {
         v
     }
 
+    #[test]
+    fn stale_flagged_payload_is_as_old_as_stale_since_not_just_fetched() {
+        let mut v = fx("usage_claude.json");
+        v["_stale"] = serde_json::json!(true);
+        v["_staleSince"] = serde_json::json!("2026-11-07T10:00:00Z");
+        let n = normalize("claude", "c", "claude", &v, now());
+        assert!(n.obs.iter().all(|o| o.observed_at == Utc.with_ymd_and_hms(2026, 11, 7, 10, 0, 0).unwrap()), "{:?}", n.obs.iter().map(|o| o.observed_at).collect::<Vec<_>>());
+    }
+    #[test]
+    fn stale_without_since_is_treated_as_oldest() {
+        let mut v = fx("usage_claude.json");
+        v["_stale"] = serde_json::json!(true);
+        let n = normalize("claude", "c", "claude", &v, now());
+        assert!(n.obs.iter().all(|o| o.observed_at < now() - chrono::Duration::days(365)));
+    }
+    #[test]
+    fn fresh_payload_unchanged() {
+        let n = normalize("claude", "c", "claude", &fx("usage_claude.json"), now());
+        assert!(n.obs.iter().all(|o| o.observed_at == now()));
+    }
     #[test]
     fn classify_names() {
         use WindowKind::*;
