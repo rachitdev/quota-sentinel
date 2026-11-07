@@ -51,6 +51,7 @@ pub struct Config {
     pub gateway_url: String,
     pub key_file: String,
     pub state_dir: String,
+    pub smtp_file: String,
     pub thresholds: Thresholds,
     /// gateway provider id -> subscription name. Providers not listed are never managed (free/local rungs).
     pub subscriptions: BTreeMap<String, String>,
@@ -76,6 +77,7 @@ impl Default for Config {
             gateway_url: "http://localhost:20128".into(),
             key_file: "~/.dsh/secrets/omniroute-mcp.env".into(),
             state_dir: "~/.dsh/state/quota-sentinel".into(),
+            smtp_file: "~/.dsh/secrets/quota-sentinel-smtp.env".into(),
             thresholds: Thresholds::default(),
             subscriptions: subs,
         }

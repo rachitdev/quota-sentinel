@@ -2,10 +2,13 @@ mod actuator;
 mod config;
 mod gateway;
 mod ledger;
+mod mail;
+mod mcp;
 mod marker;
 mod model;
 mod normalize;
 mod policy;
+mod report;
 mod tick;
 
 use anyhow::{Context, Result};
@@ -40,6 +43,13 @@ enum Cmd {
     Pause,
     /// Remove the PAUSE file.
     Resume,
+    /// Build the daily report; print it (--dry) or send it by email.
+    Report {
+        #[arg(long)]
+        dry: bool,
+    },
+    /// Serve MCP tools over stdio (status, holds, stats, decisions, pause/resume, override).
+    Mcp,
     /// Print the effective configuration.
     Config,
 }
@@ -55,7 +65,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::Config::load(cli.config.as_deref())?;
     match cli.cmd {
+        Cmd::Mcp => mcp::serve(&cfg)?,
         Cmd::Config => println!("{}", toml::to_string_pretty(&cfg)?),
+        Cmd::Report { dry } => {
+            let l = ledger::Ledger::open(&cfg.state_path().join("qs.db"))?;
+            let mode = if tick::pause_file(&cfg).exists() { "paused" } else if cfg.enabled { "live" } else { "shadow" };
+            let r = report::build(&l, Utc::now(), mode)?;
+            if dry {
+                println!("Subject: {}\n\n{}", r.subject, r.text);
+            } else {
+                let smtp = mail::load(&config::expand(&cfg.smtp_file))?;
+                mail::send(&smtp, &r.subject, &r.text, &r.html)?;
+                println!("sent: {}", r.subject);
+            }
+        }
         Cmd::Pause => {
             std::fs::create_dir_all(cfg.state_path())?;
             std::fs::write(tick::pause_file(&cfg), Utc::now().to_rfc3339())?;
