@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "配额哨兵 (Quota Sentinel)",
+    "description": "多订阅配额守护、OmniRoute 模型自动路由与每日遥测报告系统（由 Rachit Dev 开发）。"
+  }
+}
