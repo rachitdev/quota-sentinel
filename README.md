@@ -4,8 +4,16 @@ Rust one-shot CLI + stdio MCP server that keeps paid LLM subscriptions below the
 (`isActive=false`) the matching OmniRoute connection, and emails a daily report. No daemon. Spec:
 `~/code/dsh ExBuilds/docs/quota-sentinel/SPEC.md` (v0.6, reviewed by GPT Astra 6).
 
-## State: SHADOW (default). Nothing is written to the gateway.
-`~/.dsh/etc/quota-sentinel.toml` has `enabled = false`. `qs tick` reads quota, records it, and logs what it WOULD do.
+## State (2026-11-07)
+Default is SHADOW (observe + log, never write). A connection is written only if `enabled = true` AND its subscription is in
+`live_subscriptions` AND its connection id is in `live_connections` (`~/.dsh/etc/quota-sentinel.toml`).
+| Subscription | State | Evidence |
+|---|---|---|
+| chatgpt (codex connection) | **LIVE** | full gate on real connection + gateway-restart-while-held |
+| opencode-go (main) | **LIVE** | full gate on real 100% monthly trigger |
+| claude | SHADOW | Astra REJECT: needs a ~30h hold to prove the OAuth credential survives + alias/route check |
+| grok, gemini | SHADOW | gates not run |
+Not tested anywhere: a natural window reset (release was exercised with a simulated reset).
 
 ## Commands
 | | |
