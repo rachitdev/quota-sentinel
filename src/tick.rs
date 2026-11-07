@@ -86,7 +86,7 @@ pub fn run_tick(cfg: &Config, gw: &dyn Gateway, ledger: &Ledger, now: DateTime<U
         }
     }
     let actions = decide(&PolicyInput { now, th: &cfg.thresholds, conns: &inputs, holds: &holds, overrides: &overrides });
-    rep.results = Actuator { gw, ledger, now, live: &live, paused, tick }.apply_all(&actions);
+    rep.results = Actuator { gw, ledger, now, live: &live, paused, pause_file: Some(pause_file(cfg)), tick }.apply_all(&actions);
     let failed = rep.results.iter().filter(|(_, o)| matches!(o, Outcome::Failed(_))).count();
     ledger.finish_tick(tick, Utc::now(), failed == 0 && rep.probe_errors.is_empty(), &format!("managed={} actions={} failed={failed}", rep.managed, rep.results.len()))?;
     Ok(rep)

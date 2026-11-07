@@ -39,6 +39,8 @@ enum Cmd {
     Holds,
     /// Stop Sentinel from holding a connection for N hours (also use after re-enabling by hand).
     Override { connection: String, #[arg(long, default_value_t = 24)] hours: i64 },
+    /// Release ONE hold by id (explicit operator action; ownership-checked; never bulk).
+    Release { hold_id: String },
     /// Freeze all gateway writes (never bulk re-enables).
     Pause,
     /// Remove the PAUSE file.
@@ -78,6 +80,21 @@ fn main() -> Result<()> {
                 mail::send(&smtp, &r.subject, &r.text, &r.html)?;
                 println!("sent: {}", r.subject);
             }
+        }
+        Cmd::Release { hold_id } => {
+            let (gw, l) = open(&cfg)?;
+            let Some(h) = l.open_holds()?.into_iter().find(|h| h.id == hold_id) else {
+                anyhow::bail!("no open hold {hold_id}");
+            };
+            let mut live = std::collections::BTreeMap::new();
+            live.insert(h.connection_id.clone(), (h.subscription.clone(), true));
+            let act = policy::Action::Release { hold_id: h.id.clone(), conn_id: h.connection_id.clone(), reenable: h.prior_active, reason: "operator release".into() };
+            let tick = l.start_tick(Utc::now(), "release")?;
+            // An explicit operator command: not gated by `enabled`/live list, but PAUSE still freezes it.
+            let a = actuator::Actuator { gw: &gw, ledger: &l, now: Utc::now(), live: &live, paused: false, pause_file: Some(tick::pause_file(&cfg)), tick };
+            let r = a.apply_all(&[act]);
+            l.finish_tick(tick, Utc::now(), true, "operator release")?;
+            println!("{:?}", r[0].1);
         }
         Cmd::Pause => {
             std::fs::create_dir_all(cfg.state_path())?;

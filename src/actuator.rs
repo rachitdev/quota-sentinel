@@ -27,6 +27,8 @@ pub struct Actuator<'a> {
     /// conn id -> (subscription, live?)
     pub live: &'a BTreeMap<String, (String, bool)>,
     pub paused: bool,
+    /// Re-checked before EVERY write so a PAUSE created mid-tick stops the remaining actions.
+    pub pause_file: Option<std::path::PathBuf>,
     pub tick: i64,
 }
 
@@ -36,7 +38,9 @@ fn new_id(now: DateTime<Utc>, conn: &str) -> String {
 
 impl<'a> Actuator<'a> {
     fn is_live(&self, conn_id: &str) -> bool {
-        !self.paused && self.live.get(conn_id).is_some_and(|(_, l)| *l)
+        !self.paused
+            && !self.pause_file.as_ref().is_some_and(|p| p.exists())
+            && self.live.get(conn_id).is_some_and(|(_, l)| *l)
     }
     fn sub(&self, conn_id: &str) -> Option<String> {
         self.live.get(conn_id).map(|(s, _)| s.clone())
@@ -284,7 +288,7 @@ mod tests {
         Action::Hold { conn_id: "c1".into(), subscription: "claude".into(), window: WindowKind::Weekly, reset_at: Some(now() + Duration::hours(30)), max_until: now() + Duration::hours(40), predicted: false, reason: "t".into() }
     }
     fn act<'a>(g: &'a FakeGateway, l: &'a Ledger, m: &'a BTreeMap<String, (String, bool)>, paused: bool) -> Actuator<'a> {
-        Actuator { gw: g, ledger: l, now: now(), live: m, paused, tick: 1 }
+        Actuator { gw: g, ledger: l, now: now(), live: m, paused, pause_file: None, tick: 1 }
     }
 
     #[test]
@@ -448,6 +452,23 @@ mod tests {
         let r = a.apply(&hold_action()).unwrap();
         assert!(matches!(r, Outcome::Aborted(_)), "{r:?}");
         assert!(g.patches.borrow().is_empty(), "must not write on top of the user's change");
+    }
+    #[test]
+    fn pause_created_mid_tick_stops_remaining_writes() {
+        let (g, l, m) = rig(true);
+        g.add("c2", "claude", true);
+        let mut m = m;
+        m.insert("c2".to_string(), ("claude".to_string(), true));
+        let d = tempfile::tempdir().unwrap();
+        let pf = d.path().join("PAUSE");
+        let a = Actuator { gw: &g, ledger: &l, now: now(), live: &m, paused: false, pause_file: Some(pf.clone()), tick: 1 };
+        let h1 = hold_action();
+        let mut h2 = hold_action();
+        if let Action::Hold { conn_id, .. } = &mut h2 { *conn_id = "c2".into(); }
+        assert_eq!(a.apply(&h1).unwrap(), Outcome::Applied);
+        std::fs::write(&pf, "").unwrap(); // PAUSE appears between actions
+        assert_eq!(a.apply(&h2).unwrap(), Outcome::Shadow);
+        assert_eq!(g.get("c2")["isActive"], json!(true));
     }
     #[test]
     fn hold_never_sent_for_unmanaged_connection() {

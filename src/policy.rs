@@ -125,6 +125,13 @@ fn max_until(w: WindowKind, reset: Option<DateTime<Utc>>, now: DateTime<Utc>, th
     reset.unwrap_or(now + default_len(w)) + Duration::minutes(th.grace_minutes) + Duration::hours(th.max_hold_extra_hours)
 }
 
+/// Retargeting may never push a hold past one window length from when it was placed, so repeated large reset
+/// shifts cannot postpone the expiry alarm forever.
+fn bounded_max_until(w: WindowKind, reset: Option<DateTime<Utc>>, now: DateTime<Utc>, placed_at: DateTime<Utc>, th: &Thresholds) -> DateTime<Utc> {
+    let cap = placed_at + default_len(w) + Duration::minutes(th.grace_minutes) + Duration::hours(th.max_hold_extra_hours);
+    max_until(w, reset, now, th).min(cap)
+}
+
 struct Trigger {
     kind: WindowKind,
     reset_at: Option<DateTime<Utc>>,
@@ -229,7 +236,9 @@ fn decide_with_hold(
         // Crash window: intent logged, not verified. Redo only while still warranted.
         if strictest_trigger(c, ev, now, th, alerts).is_some() {
             // Active + unmarked + old is indistinguishable from "the user re-enabled it": never re-apply over that.
-            let young = now - h.placed_at <= Duration::minutes(2 * th.tick_minutes);
+            // A negative age (clock stepped back) is NOT young: ambiguity resolves toward user intent.
+            let age = now - h.placed_at;
+            let young = age >= Duration::zero() && age <= Duration::minutes(2 * th.tick_minutes);
             if c.conn.is_active && marker_id.is_none() && !young {
                 out.push(Action::ManualOverride { hold_id: h.id.clone(), conn_id: conn_id.clone(), until: now + Duration::hours(th.override_hours), reason: "pending hold is old and the connection is active: treating as a manual re-enable".into() });
                 alerts.push(Action::Alert { kind: AlertKind::ManualOverride, conn_id: Some(conn_id), message: format!("{}: ambiguous pending hold treated as manual override", c.subscription) });
@@ -294,7 +303,7 @@ fn decide_with_hold(
                 conn_id: conn_id.clone(),
                 window: t.kind,
                 reset_at: t.reset_at,
-                max_until: max_until(t.kind, t.reset_at, now, th),
+                max_until: bounded_max_until(t.kind, t.reset_at, now, h.placed_at, th),
                 reason: t.detail.clone(),
             });
         }
@@ -329,7 +338,7 @@ fn decide_with_hold(
             conn_id,
             window: t.kind,
             reset_at: t.reset_at,
-            max_until: max_until(t.kind, t.reset_at, now, th),
+            max_until: bounded_max_until(t.kind, t.reset_at, now, h.placed_at, th),
             reason: format!("{} cleared; {}", h.window.as_str(), t.detail),
         });
         return;
@@ -598,6 +607,21 @@ mod tests {
         let moved = ob(WindowKind::Weekly, 95.0, 3000 + 600, 1);
         let a = run(vec![ci(false, marker_psd("h1"), vec![moved])], vec![h]);
         assert!(has(&a, |x| matches!(x, Action::Retarget { .. })));
+    }
+    #[test]
+    fn negative_hold_age_after_clock_step_back_is_not_young() {
+        let h = hold(WindowKind::Weekly, Some(3000), -30, false, true); // placed 30 min in the "future"
+        let a = run(vec![ci(true, json!({}), vec![ob(WindowKind::Weekly, 95.0, 3000, 1)])], vec![h]);
+        assert!(has(&a, |x| matches!(x, Action::ManualOverride { .. })));
+        assert!(!has(&a, |x| matches!(x, Action::ResumeApply { .. })));
+    }
+    #[test]
+    fn repeated_reset_shifts_cannot_extend_hold_beyond_one_window_from_placement() {
+        let h = hold(WindowKind::FiveHour, Some(60), 290, true, true); // placed 4h50m ago
+        let a = run(vec![ci(false, marker_psd("h1"), vec![ob(WindowKind::FiveHour, 96.0, 600, 1)])], vec![h.clone()]);
+        let Some(Action::Retarget { max_until, .. }) = a.iter().find(|x| matches!(x, Action::Retarget { .. })) else { panic!("no retarget") };
+        let cap = h.placed_at + Duration::hours(5) + Duration::minutes(5) + Duration::hours(2);
+        assert!(*max_until <= cap, "{max_until} > {cap}");
     }
     #[test]
     fn user_reenable_is_manual_override_not_fought() {
