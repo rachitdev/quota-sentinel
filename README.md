@@ -9,10 +9,11 @@ Default is SHADOW (observe + log, never write). A connection is written only if 
 `live_subscriptions` AND its connection id is in `live_connections` (`~/.dsh/etc/quota-sentinel.toml`).
 | Subscription | State | Evidence |
 |---|---|---|
-| chatgpt (codex connection) | **LIVE** | full gate on real connection + gateway-restart-while-held |
-| opencode-go (main) | **LIVE** | full gate on real 100% monthly trigger |
-| claude | SHADOW | Astra REJECT: needs a ~30h hold to prove the OAuth credential survives + alias/route check |
-| grok, gemini | SHADOW | gates not run |
+| chatgpt (codex connection) | **LIVE** | full gate + gateway-restart-while-held |
+| opencode-go (main) | **LIVE** (monthly hold active) | full gate on the real 100% monthly trigger |
+| gemini (agy connection) | **LIVE** | full gate; Astra APPROVE-WITH-CHANGES (bounded, monitored) |
+| grok (grok-cli + xai-oauth) | SHADOW | full gate passed, but Astra REJECT: needs Grok-specific long-hold token refresh proof + natural reset (sibling coordination is now implemented) |
+| claude | SHADOW | Astra REJECT: ~30h hold recovery proof + alias check |
 Not tested anywhere: a natural window reset (release was exercised with a simulated reset).
 
 ## Commands
