@@ -48,6 +48,9 @@ pub struct Config {
     pub enabled: bool,
     /// Subscriptions allowed to be enforced live (others stay shadow). Rollout: chatgpt, grok, opencode-go, claude, gemini.
     pub live_subscriptions: Vec<String>,
+    /// Connection ids allowed to be written. A connection is live only if its subscription is in
+    /// `live_subscriptions` AND its id is listed here (subscription mapping alone never authorises a write).
+    pub live_connections: Vec<String>,
     pub gateway_url: String,
     pub key_file: String,
     pub state_dir: String,
@@ -74,6 +77,7 @@ impl Default for Config {
         Config {
             enabled: false,
             live_subscriptions: vec![],
+            live_connections: vec![],
             gateway_url: "http://localhost:20128".into(),
             key_file: "~/.dsh/secrets/omniroute-mcp.env".into(),
             state_dir: "~/.dsh/state/quota-sentinel".into(),
@@ -108,7 +112,9 @@ impl Config {
     pub fn subscription_of(&self, provider: &str) -> Option<&str> {
         self.subscriptions.get(provider).map(String::as_str)
     }
-    pub fn is_live(&self, subscription: &str) -> bool {
-        self.enabled && self.live_subscriptions.iter().any(|s| s == subscription)
+    pub fn is_live(&self, subscription: &str, connection_id: &str) -> bool {
+        self.enabled
+            && self.live_subscriptions.iter().any(|s| s == subscription)
+            && self.live_connections.iter().any(|c| c == connection_id)
     }
 }

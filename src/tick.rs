@@ -61,7 +61,7 @@ pub fn run_tick(cfg: &Config, gw: &dyn Gateway, ledger: &Ledger, now: DateTime<U
         let Some(c) = Conn::from_json(v) else { continue };
         let Some(sub) = cfg.subscription_of(&c.provider).map(str::to_string) else { continue };
         rep.managed += 1;
-        live.insert(c.id.clone(), (sub.clone(), cfg.is_live(&sub)));
+        live.insert(c.id.clone(), (sub.clone(), cfg.is_live(&sub, &c.id)));
         let (obs, unavailable) = match gw.usage(&c.id) {
             Ok(u) => {
                 let n = normalize(&c.provider, &c.id, &sub, &u, now);
@@ -107,6 +107,7 @@ mod tests {
         c.enabled = live;
         if live {
             c.live_subscriptions = vec!["claude".into()];
+            c.live_connections = vec!["c1".into()];
         }
         c.state_dir = tempfile::tempdir().unwrap().keep().to_string_lossy().into();
         c
@@ -145,6 +146,31 @@ mod tests {
         run_tick(&c, &g, &l, now() + Duration::minutes(15)).unwrap();
         assert_eq!(g.patches.borrow().len(), n, "second tick must not write again");
         assert_eq!(l.open_holds().unwrap().len(), 1);
+    }
+    #[test]
+    fn subscription_in_live_list_but_connection_not_allowlisted_is_never_written() {
+        let (g, l) = rig();
+        g.add("c2", "claude", true); // same subscription, NOT allowlisted
+        g.usage.borrow_mut().insert("c1".into(), usage(10.0, 3000));
+        g.usage.borrow_mut().insert("c2".into(), usage(99.0, 3000));
+        let r = run_tick(&cfg(true), &g, &l, now()).unwrap();
+        assert!(r.results.iter().any(|(a, o)| matches!(a, Action::Hold { conn_id, .. } if conn_id == "c2") && *o == Outcome::Shadow));
+        assert_eq!(g.get("c2")["isActive"], json!(true));
+        assert!(g.patches.borrow().is_empty());
+    }
+    #[test]
+    fn restart_while_held_recovers_from_ledger_and_gateway_state_alone() {
+        let (g, l) = rig();
+        let c = cfg(true);
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000));
+        run_tick(&c, &g, &l, now()).unwrap();
+        // simulate a new process: nothing but the gateway state and the ledger file survive
+        let n = g.patches.borrow().len();
+        let r = run_tick(&c, &g, &l, now() + Duration::minutes(15)).unwrap();
+        assert_eq!(g.patches.borrow().len(), n);
+        assert_eq!(g.get("c1")["isActive"], json!(false));
+        assert_eq!(l.open_holds().unwrap().len(), 1);
+        assert!(r.results.iter().all(|(a, _)| !matches!(a, Action::Release { .. } | Action::ManualOverride { .. })));
     }
     #[test]
     fn unmanaged_providers_are_never_touched() {
