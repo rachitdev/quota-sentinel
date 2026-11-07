@@ -1,0 +1,8 @@
+# Patch fragment applied on top of @deepseek-ai/dsh-base when quota-sentinel-dsh-plugin is enabled.
+- insert:
+    - id: quota-sentinel
+      name: quota-sentinel-dsh-plugin
+      config:
+        binaryPath: "/Users/rachit/.dsh/bin/qs"
+        tickIntervalMinutes: 15
+        autoTick: true

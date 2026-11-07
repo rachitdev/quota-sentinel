@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Quota Sentinel Icon">
+  <title>Quota Sentinel</title>
+  <defs>
+    <linearGradient id="qs-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#141724"/>
+      <stop offset="100%" stop-color="#24283B"/>
+    </linearGradient>
+    <linearGradient id="qs-shield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </linearGradient>
+    <linearGradient id="qs-core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#qs-bg)" stroke="#F59E0B" stroke-width="3"/>
+  <!-- Sentinel Shield -->
+  <path d="M64 24 L96 36 V62 C96 82 82 98 64 104 C46 98 32 82 32 62 V36 Z" fill="none" stroke="url(#qs-shield)" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Circular Quota Gauge Arc -->
+  <path d="M46 64 A 18 18 0 1 1 82 64" fill="none" stroke="#10B981" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="28 8"/>
+  <!-- Gauge Needle / Pulse -->
+  <line x1="64" y1="64" x2="74" y2="52" stroke="#F59E0B" stroke-width="3" stroke-linecap="round"/>
+  <!-- Center Sentinel Core -->
+  <circle cx="64" cy="64" r="6" fill="url(#qs-core)" stroke="#FFF" stroke-width="2"/>
+  <!-- Sub-indicators -->
+  <circle cx="50" cy="82" r="3" fill="#10B981"/>
+  <circle cx="64" cy="86" r="3" fill="#F59E0B"/>
+  <circle cx="78" cy="82" r="3" fill="#38BDF8"/>
+</svg>

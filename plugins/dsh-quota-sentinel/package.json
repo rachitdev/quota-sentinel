@@ -1,0 +1,33 @@
+{
+  "name": "quota-sentinel-dsh-plugin",
+  "version": "1.0.0",
+  "description": "Quota Sentinel for DeepSeek Harness: multi-subscription quota guardian, automatic OmniRoute model router, and daily telemetry by Rachit Dev",
+  "author": "Rachit Dev <rachit.dev@gmail.com> (https://www.linkedin.com/in/rachit-dev)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./lib/index.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:~"
+  }
+}
