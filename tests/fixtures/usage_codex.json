@@ -1,0 +1,28 @@
+{
+ "plan": "plus",
+ "limitReached": false,
+ "quotas": {
+  "session": {
+   "used": 6,
+   "total": 100,
+   "remainingPercentage": 94,
+   "resetAt": "2026-11-07T16:18:17.000Z",
+   "observedAt": "2026-11-07T14:21:27.214Z"
+  },
+  "weekly": {
+   "used": 36,
+   "total": 100,
+   "remainingPercentage": 64,
+   "resetAt": "2026-11-11T17:09:01.000Z",
+   "observedAt": "2026-11-07T14:21:27.214Z"
+  }
+ },
+ "bankedResetCredits": 2,
+ "paidCredits": {
+  "hasCredits": false,
+  "unlimited": false,
+  "overageLimitReached": false,
+  "balance": 0
+ },
+ "fetchedAt": "2026-11-07T14:21:27.214Z"
+}

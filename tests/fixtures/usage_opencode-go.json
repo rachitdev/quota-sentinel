@@ -1,0 +1,36 @@
+{
+ "plan": "OpenCode Go",
+ "quotas": {
+  "session": {
+   "used": 0,
+   "total": 12,
+   "remaining": 12,
+   "remainingPercentage": 100,
+   "resetAt": "2026-11-07T19:21:36.277Z",
+   "unlimited": false,
+   "displayName": "$12 / 5-hour",
+   "currency": "USD"
+  },
+  "weekly": {
+   "used": 0,
+   "total": 30,
+   "remaining": 30,
+   "remainingPercentage": 100,
+   "resetAt": "2026-11-09T00:00:00.000Z",
+   "unlimited": false,
+   "displayName": "$30 / week",
+   "currency": "USD"
+  },
+  "mcp_monthly": {
+   "used": 60,
+   "total": 60,
+   "remaining": 0,
+   "remainingPercentage": 0,
+   "resetAt": "2026-11-16T08:39:43.000Z",
+   "unlimited": false,
+   "displayName": "$60 / month",
+   "currency": "USD"
+  }
+ },
+ "limitReached": true
+}

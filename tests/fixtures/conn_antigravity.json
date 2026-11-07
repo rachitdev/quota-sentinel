@@ -1,0 +1,9 @@
+{
+ "id": "a5dbed9d-fixture",
+ "provider": "antigravity",
+ "authType": "oauth",
+ "name": "user@example.com",
+ "isActive": false,
+ "priority": 1,
+ "providerSpecificData": {}
+}

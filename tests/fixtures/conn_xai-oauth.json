@@ -1,0 +1,9 @@
+{
+ "id": "175330f6-fixture",
+ "provider": "xai-oauth",
+ "authType": "oauth",
+ "name": "user@example.com",
+ "isActive": true,
+ "priority": 1,
+ "providerSpecificData": {}
+}

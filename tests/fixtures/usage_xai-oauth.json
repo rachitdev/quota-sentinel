@@ -1,0 +1,13 @@
+{
+ "plan": "xAI OAuth (Grok) \u00b7 Weekly",
+ "quotas": {
+  "weekly": {
+   "used": 54,
+   "total": 100,
+   "remaining": 46,
+   "remainingPercentage": 46,
+   "resetAt": "2026-11-07T19:41:48.488Z",
+   "unlimited": false
+  }
+ }
+}

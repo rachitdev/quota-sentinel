@@ -1,0 +1,9 @@
+{
+ "id": "b6d32c76-fixture",
+ "provider": "openrouter",
+ "authType": "apikey",
+ "name": "OmniRoute",
+ "isActive": true,
+ "priority": 1,
+ "providerSpecificData": {}
+}

@@ -1,0 +1,353 @@
+{
+ "plan": "Pro",
+ "quotaGroups": [
+  {
+   "id": "gemini",
+   "displayName": "Gemini Models",
+   "windows": {
+    "weekly": {
+     "window": "weekly",
+     "quotaGroupId": "gemini",
+     "quotaAggregate": true,
+     "used": 25,
+     "total": 1000,
+     "resetAt": "2026-11-14T00:30:44.000Z",
+     "remainingPercentage": 97.46207,
+     "unlimited": false,
+     "fractionReported": true,
+     "quotaSource": "retrieveUserQuotaSummary"
+    },
+    "session": {
+     "window": "session",
+     "quotaGroupId": "gemini",
+     "quotaAggregate": true,
+     "used": 33,
+     "total": 1000,
+     "resetAt": "2026-11-07T15:30:44.000Z",
+     "remainingPercentage": 96.744496,
+     "unlimited": false,
+     "fractionReported": true,
+     "quotaSource": "retrieveUserQuotaSummary"
+    }
+   },
+   "models": [
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash-tiered",
+    "gemini-3-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash-low",
+    "gemini-3.8-flash-medium",
+    "gemini-3.1-flash-image",
+    "gemini-3.8-flash-high"
+   ]
+  },
+  {
+   "id": "claude_gpt",
+   "displayName": "Claude & GPT Models",
+   "windows": {
+    "weekly": {
+     "window": "weekly",
+     "quotaGroupId": "claude_gpt",
+     "quotaAggregate": true,
+     "used": 0,
+     "total": 1000,
+     "resetAt": "2026-11-14T14:21:29.000Z",
+     "remainingPercentage": 100,
+     "unlimited": false,
+     "fractionReported": true,
+     "quotaSource": "retrieveUserQuotaSummary"
+    },
+    "session": {
+     "window": "session",
+     "quotaGroupId": "claude_gpt",
+     "quotaAggregate": true,
+     "used": 0,
+     "total": 1000,
+     "resetAt": "2026-11-07T19:21:29.000Z",
+     "remainingPercentage": 100,
+     "unlimited": false,
+     "fractionReported": true,
+     "quotaSource": "retrieveUserQuotaSummary"
+    }
+   },
+   "models": [
+    "claude-sonnet-5-5-medium",
+    "claude-sonnet-5-5-low",
+    "claude-opus-5-5-high",
+    "claude-sonnet-5-5-high",
+    "claude-opus-5-5-low",
+    "claude-opus-5-5-medium"
+   ]
+  },
+  {
+   "id": "gemini_4_argon",
+   "displayName": "Gemini 4 Argon",
+   "windows": {
+    "weekly": {
+     "window": "weekly",
+     "quotaGroupId": "gemini_4_argon",
+     "quotaAggregate": true,
+     "used": 18,
+     "total": 1000,
+     "resetAt": "2026-11-14T10:51:33.000Z",
+     "remainingPercentage": 98.188627,
+     "unlimited": false,
+     "fractionReported": true,
+     "quotaSource": "retrieveUserQuotaSummary"
+    }
+   },
+   "models": []
+  }
+ ],
+ "quotas": {
+  "claude-sonnet-5-5-medium": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "claude-sonnet-5-5-low": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.5-flash-lite": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.8-flash-tiered": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "claude-opus-5-5-high": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3-flash": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "claude-sonnet-5-5-high": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.1-flash-lite": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "claude-opus-5-5-low": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.8-flash-low": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.8-flash-medium": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "claude-opus-5-5-medium": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gpt-oss-120b-medium": {
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:30.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini-3.8-flash-high": {
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuota"
+  },
+  "gemini_weekly": {
+   "window": "weekly",
+   "quotaGroupId": "gemini",
+   "quotaAggregate": true,
+   "used": 25,
+   "total": 1000,
+   "resetAt": "2026-11-14T00:30:44.000Z",
+   "remainingPercentage": 97.46207,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  },
+  "gemini_session": {
+   "window": "session",
+   "quotaGroupId": "gemini",
+   "quotaAggregate": true,
+   "used": 33,
+   "total": 1000,
+   "resetAt": "2026-11-07T15:30:44.000Z",
+   "remainingPercentage": 96.744496,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  },
+  "claude_gpt_weekly": {
+   "window": "weekly",
+   "quotaGroupId": "claude_gpt",
+   "quotaAggregate": true,
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-14T14:21:29.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  },
+  "claude_gpt_session": {
+   "window": "session",
+   "quotaGroupId": "claude_gpt",
+   "quotaAggregate": true,
+   "used": 0,
+   "total": 1000,
+   "resetAt": "2026-11-07T19:21:29.000Z",
+   "remainingPercentage": 100,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  },
+  "gemini_4_argon_weekly": {
+   "window": "weekly",
+   "quotaGroupId": "gemini_4_argon",
+   "quotaAggregate": true,
+   "used": 18,
+   "total": 1000,
+   "resetAt": "2026-11-14T10:51:33.000Z",
+   "remainingPercentage": 98.188627,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  },
+  "argon_weekly": {
+   "window": "weekly",
+   "quotaGroupId": "gemini_4_argon",
+   "quotaAggregate": true,
+   "used": 18,
+   "total": 1000,
+   "resetAt": "2026-11-14T10:51:33.000Z",
+   "remainingPercentage": 98.188627,
+   "unlimited": false,
+   "fractionReported": true,
+   "quotaSource": "retrieveUserQuotaSummary"
+  }
+ },
+ "subscriptionInfo": {
+  "currentTier": {
+   "id": "free-tier",
+   "name": "Antigravity",
+   "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+   "privacyNotice": {
+    "showNotice": true,
+    "noticeText": "This notice and our Privacy Policy - https://policies.google.com/privacy - describe how Gemini Code Assist for individuals handles your data. Please read them carefully.\n\nWhen you use Gemini Code Assist for individuals, Google collects your prompts, related code, generated output, code edits, related feature usage information, and your feedback to provide, improve, and develop Google products and services and machine learning technologies.\n\nTo help with quality and improve our products (such as generative machine-learning models), human reviewers may read, annotate, and process the data collected above. We take steps to protect your privacy as part of this process. This includes disconnecting the data from your Google Account before reviewers see or annotate it, and storing those disconnected copies for up to 18 months. Please don't submit confidential information or any data you wouldn't want a reviewer to see or Google to use to improve our products, services, and machine-learning technologies.\n\nIf you don't want this data used to improve Google's machine learning models, you can opt out below."
+   },
+   "upgradeSubscriptionUri": "https://accounts.google.com/AccountChooser?Email=rachit.dev%40gmail.com&continue=https%3A%2F%2Fone.google.com%2Fai",
+   "upgradeSubscriptionText": "Upgrade to get 1,500 model requests per day with Gemini CLI and Gemini Code Assist's agent mode with Google AI Pro.",
+   "upgradeSubscriptionType": "GOOGLE_ONE"
+  },
+  "allowedTiers": [
+   {
+    "id": "free-tier",
+    "name": "Antigravity",
+    "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+    "privacyNotice": {
+     "showNotice": true,
+     "noticeText": "This notice and our Privacy Policy - https://policies.google.com/privacy - describe how Gemini Code Assist for individuals handles your data. Please read them carefully.\n\nWhen you use Gemini Code Assist for individuals, Google collects your prompts, related code, generated output, code edits, related feature usage information, and your feedback to provide, improve, and develop Google products and services and machine learning technologies.\n\nTo help with quality and improve our products (such as generative machine-learning models), human reviewers may read, annotate, and process the data collected above. We take steps to protect your privacy as part of this process. This includes disconnecting the data from your Google Account before reviewers see or annotate it, and storing those disconnected copies for up to 18 months. Please don't submit confidential information or any data you wouldn't want a reviewer to see or Google to use to improve our products, services, and machine-learning technologies.\n\nIf you don't want this data used to improve Google's machine learning models, you can opt out below."
+    },
+    "isDefault": true
+   },
+   {
+    "id": "standard-tier",
+    "name": "Antigravity",
+    "description": "Unlimited coding assistant with the most powerful Gemini models",
+    "userDefinedCloudaicompanionProject": true,
+    "privacyNotice": {},
+    "usesGcpTos": true
+   }
+  ],
+  "cloudaicompanionProject": "aicode-consumers",
+  "gcpManaged": false,
+  "upgradeSubscriptionUri": "https://codeassist.google.com/upgrade",
+  "paidTier": {
+   "id": "g1-pro-tier",
+   "name": "Google AI Pro",
+   "description": "Google AI Pro",
+   "upgradeSubscriptionUri": "https://antigravity.google/g1-upgrade",
+   "upgradeSubscriptionText": "You can upgrade to a Google AI Ultra plan to receive higher rate limits.",
+   "availableCredits": [
+    {
+     "creditType": "GOOGLE_ONE_AI",
+     "minimumCreditAmountForUsage": "50"
+    }
+   ]
+  }
+ },
+ "hasArgon": true
+}

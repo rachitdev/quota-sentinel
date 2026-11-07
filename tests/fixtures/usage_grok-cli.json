@@ -1,0 +1,31 @@
+{
+ "quotas": {
+  "weekly": {
+   "used": 54,
+   "total": 100,
+   "remaining": 46,
+   "remainingPercentage": 46,
+   "resetAt": "2026-11-07T19:41:48.488638+00:00",
+   "isPercentageOnly": true
+  },
+  "product_grok_build": {
+   "displayName": "Grok Build",
+   "used": 54,
+   "total": 100,
+   "remaining": 46,
+   "remainingPercentage": 46,
+   "resetAt": "2026-11-07T19:41:48.488638+00:00",
+   "isPercentageOnly": true
+  }
+ },
+ "plan": "GrokPro",
+ "bankedResetCredits": 0,
+ "billing": {
+  "currency": "USD",
+  "extraCreditsMinorUnits": 0,
+  "autoTopUp": {
+   "available": false
+  },
+  "additionalCreditsUrl": "https://grok.com/build?_s=usage"
+ }
+}

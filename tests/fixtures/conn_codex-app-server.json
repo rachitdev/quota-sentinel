@@ -1,0 +1,9 @@
+{
+ "id": "57a7e195-fixture",
+ "provider": "codex-app-server",
+ "authType": "apikey",
+ "name": "codex-app-server-local",
+ "isActive": true,
+ "priority": 1,
+ "providerSpecificData": {}
+}

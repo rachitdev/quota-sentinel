@@ -1,0 +1,63 @@
+{
+ "plan": "default_claude_ai",
+ "quotas": {
+  "session (5h)": {
+   "used": 17,
+   "total": 100,
+   "remaining": 83,
+   "resetAt": "2026-11-07T16:10:00.224Z",
+   "remainingPercentage": 83,
+   "unlimited": false,
+   "claudeQuota": {
+    "kind": "session",
+    "active": false,
+    "severity": "normal",
+    "scopeKey": null,
+    "modelId": null,
+    "modelDisplayName": null
+   }
+  },
+  "weekly (7d)": {
+   "used": 91,
+   "total": 100,
+   "remaining": 9,
+   "resetAt": "2026-11-08T21:00:00.224Z",
+   "remainingPercentage": 9,
+   "unlimited": false,
+   "claudeQuota": {
+    "kind": "weekly_all",
+    "active": true,
+    "severity": "critical",
+    "scopeKey": null,
+    "modelId": null,
+    "modelDisplayName": null
+   }
+  }
+ },
+ "modelQuotas": {},
+ "extraUsage": {
+  "is_enabled": false,
+  "monthly_limit": null,
+  "used_credits": null,
+  "utilization": null,
+  "currency": null,
+  "decimal_places": null,
+  "disabled_reason": null,
+  "user_disabled": true,
+  "spend_limit_reached": false,
+  "credits_ever_enabled": true,
+  "daily": null,
+  "weekly": null
+ },
+ "bootstrap": {
+  "account_uuid": "9f8dd34c-bd3e-46d0-b9e2-5b254a5bf292",
+  "account_email": "user@example.com",
+  "organization_uuid": "7a387733-e7e3-45cf-8ba2-cc40880407b1",
+  "organization_name": "Rachit Dev",
+  "organization_type": "claude_pro",
+  "organization_rate_limit_tier": "default_claude_ai",
+  "user_rate_limit_tier": null,
+  "seat_tier": null
+ },
+ "bankedResetCredits": 0
+}

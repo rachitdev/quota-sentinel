@@ -1,0 +1,9 @@
+{
+ "id": "625bf7b6-fixture",
+ "provider": "opencode-go",
+ "authType": "apikey",
+ "name": "main",
+ "isActive": true,
+ "priority": 1,
+ "providerSpecificData": {}
+}

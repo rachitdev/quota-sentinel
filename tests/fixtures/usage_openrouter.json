@@ -1,0 +1,36 @@
+{
+ "plan": "OpenRouter",
+ "quotas": {
+  "free_daily": {
+   "used": 2,
+   "total": 1000,
+   "remaining": 998,
+   "remainingPercentage": 100,
+   "resetAt": "2026-11-08T00:00:00.000Z",
+   "unlimited": false,
+   "displayName": "Free-tier requests (daily)"
+  },
+  "free_rpm": {
+   "used": 0,
+   "total": 20,
+   "remaining": 20,
+   "remainingPercentage": 100,
+   "resetAt": null,
+   "unlimited": false,
+   "displayName": "Free-tier requests (per minute)"
+  },
+  "credits": {
+   "used": 0.2142823689999993,
+   "total": 10,
+   "remaining": 9.785717631,
+   "remainingPercentage": 98,
+   "resetAt": null,
+   "unlimited": false,
+   "currency": "USD"
+  }
+ },
+ "isFreeTier": false,
+ "usageDaily": 0.00054,
+ "usageWeekly": 0.033941127,
+ "usageMonthly": 0.214282369
+}

@@ -1,0 +1,9 @@
+{
+ "id": "411f6c47-fixture",
+ "provider": "codex",
+ "authType": "oauth",
+ "name": "user@example.com",
+ "isActive": true,
+ "priority": 1,
+ "providerSpecificData": {}
+}
