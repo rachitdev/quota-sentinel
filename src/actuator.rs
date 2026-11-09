@@ -1,6 +1,7 @@
 //! Applies policy [`Action`]s to the gateway. The gateway has no compare-and-set (verified), so every write is
 //! re-read first, patches ONLY `isActive` and our own `qsHold` key, is read back afterwards, and aborts on any
 //! disagreement. Shadow mode (not live for the subscription, or PAUSE file present) records and writes nothing.
+use crate::freeonly::{self, FreeOnly};
 use crate::gateway::Gateway;
 use crate::ledger::{HoldRow, Ledger};
 use crate::marker::{self, QsHold};
@@ -30,6 +31,8 @@ pub struct Actuator<'a> {
     /// Re-checked before EVERY write so a PAUSE created mid-tick stops the remaining actions.
     pub pause_file: Option<std::path::PathBuf>,
     pub tick: i64,
+    /// Subscriptions held by blocking only their paid models.
+    pub free: FreeOnly<'a>,
 }
 
 fn new_id(now: DateTime<Utc>, conn: &str) -> String {
@@ -48,6 +51,41 @@ impl<'a> Actuator<'a> {
     fn log(&self, conn: Option<&str>, action: &str, w: Option<WindowKind>, reason: &str, applied: bool, detail: &str) {
         let sub = conn.and_then(|c| self.sub(c));
         let _ = self.ledger.record_decision(self.now, self.tick, conn, sub.as_deref(), action, w, reason, applied, detail);
+    }
+
+    /// Paid-model exclusions for `c`, merged with the user's own: returns (PATCH body fragment, patterns we own).
+    /// Fails (so the caller retries next tick) when the model list is unavailable or empty: never guesses a partial block.
+    fn paid_block(&self, c: &Conn, already_ours: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+        let models = self.gw.models(&c.id)?;
+        anyhow::ensure!(!models.is_empty(), "connection reports no models; cannot build a paid-model block");
+        let mut ours = freeonly::paid_exclusions(&models, self.free.patterns);
+        ours.extend(already_ours.iter().cloned());
+        ours.sort();
+        ours.dedup();
+        let merged = freeonly::with_ours(&freeonly::excluded_of(&c.provider_specific_data), &ours);
+        Ok((merged, ours))
+    }
+
+    /// Marker removal, plus removal of the exclusions a free-only marker added (the user's own are kept).
+    fn clear_body(&self, conn_id: &str) -> Value {
+        let mut psd = json!({marker::KEY: null});
+        if let Ok(Some(c)) = self.read(conn_id) {
+            if let Some(m) = marker::read(&c.provider_specific_data).filter(|m| m.free_only) {
+                psd["excludedModels"] = freeonly::without_ours(&freeonly::excluded_of(&c.provider_specific_data), &m.excluded);
+            }
+        }
+        json!({"providerSpecificData": psd})
+    }
+
+    fn is_free_only(&self, conn_id: &str) -> bool {
+        self.sub(conn_id).is_some_and(|s| self.free.applies(&s))
+    }
+
+    /// Body that places a free-only hold: ownership marker + paid-model exclusions. `isActive` is never touched.
+    fn free_only_body(&self, c: &Conn, m: &QsHold) -> Result<(Value, Vec<String>)> {
+        let (merged, ours) = self.paid_block(c, &m.excluded)?;
+        let mark = QsHold { excluded: ours.clone(), free_only: true, ..m.clone() };
+        Ok((json!({"providerSpecificData": {marker::KEY: marker::to_value(&mark), "excludedModels": merged}}), ours))
     }
 
     fn read(&self, id: &str) -> Result<Option<Conn>> {
@@ -116,12 +154,23 @@ impl<'a> Actuator<'a> {
                         return Ok(Outcome::Aborted(m.into()));
                     }
                 }
-                let m = QsHold { id: id.clone(), window: window.as_str().into(), reset_at: *reset_at, prior_active: true };
-                let body = json!({"isActive": false, "providerSpecificData": {marker::KEY: marker::to_value(&m)}});
+                let m = QsHold { id: id.clone(), window: window.as_str().into(), reset_at: *reset_at, prior_active: true, free_only: false, excluded: vec![] };
                 let want = id.clone();
-                let ok = self.write_verified(conn_id, &body, move |c| {
-                    !c.is_active && marker::read(&c.provider_specific_data).is_some_and(|x| x.id == want)
-                });
+                let ok = if self.is_free_only(conn_id) {
+                    match self.free_only_body(&c, &QsHold { free_only: true, ..m }) {
+                        Ok((body, ours)) => self.write_verified(conn_id, &body, move |c| {
+                            c.is_active
+                                && marker::read(&c.provider_specific_data).is_some_and(|x| x.id == want)
+                                && freeonly::excluded_of(&c.provider_specific_data).iter().collect::<std::collections::BTreeSet<_>>().is_superset(&ours.iter().collect())
+                        }),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    let body = json!({"isActive": false, "providerSpecificData": {marker::KEY: marker::to_value(&m)}});
+                    self.write_verified(conn_id, &body, move |c| {
+                        !c.is_active && marker::read(&c.provider_specific_data).is_some_and(|x| x.id == want)
+                    })
+                };
                 match ok {
                     Ok(true) => {
                         self.ledger.mark_applied(&id)?;
@@ -146,14 +195,34 @@ impl<'a> Actuator<'a> {
                 let Some(h) = self.ledger.open_holds()?.into_iter().find(|h| &h.id == hold_id) else { return Ok(Outcome::Noted) };
                 let Some(c) = self.read(conn_id)? else { return Ok(Outcome::Aborted("connection vanished".into())) };
                 let mk = marker::read(&c.provider_specific_data);
+                let free_only = self.is_free_only(conn_id);
                 match (c.is_active, mk) {
+                    (true, Some(m)) if free_only && m.id == h.id => {
+                        self.ledger.mark_applied(&h.id)?;
+                        self.log(Some(conn_id), "resume", Some(h.window), "write had landed; ledger confirmed", true, hold_id);
+                        Ok(Outcome::Applied)
+                    }
+                    (true, None) if free_only => {
+                        let m = QsHold { id: h.id.clone(), window: h.window.as_str().into(), reset_at: h.reset_at, prior_active: h.prior_active, free_only: true, excluded: vec![] };
+                        let (body, ours) = self.free_only_body(&c, &m)?;
+                        let want = h.id.clone();
+                        let done = self.write_verified(conn_id, &body, move |c| {
+                            marker::read(&c.provider_specific_data).is_some_and(|x| x.id == want)
+                                && freeonly::excluded_of(&c.provider_specific_data).iter().collect::<std::collections::BTreeSet<_>>().is_superset(&ours.iter().collect())
+                        })?;
+                        if done {
+                            self.ledger.mark_applied(&h.id)?;
+                        }
+                        self.log(Some(conn_id), "resume", Some(h.window), "re-applied free-only hold", done, hold_id);
+                        Ok(if done { Outcome::Applied } else { Outcome::Failed("not confirmed".into()) })
+                    }
                     (false, Some(m)) if m.id == h.id => {
                         self.ledger.mark_applied(&h.id)?;
                         self.log(Some(conn_id), "resume", Some(h.window), "write had landed; ledger confirmed", true, hold_id);
                         Ok(Outcome::Applied)
                     }
                     (true, None) => {
-                        let m = QsHold { id: h.id.clone(), window: h.window.as_str().into(), reset_at: h.reset_at, prior_active: h.prior_active };
+                        let m = QsHold { id: h.id.clone(), window: h.window.as_str().into(), reset_at: h.reset_at, prior_active: h.prior_active, free_only: false, excluded: vec![] };
                         let body = json!({"isActive": false, "providerSpecificData": {marker::KEY: marker::to_value(&m)}});
                         let want = h.id.clone();
                         let done = self.write_verified(conn_id, &body, move |c| !c.is_active && marker::read(&c.provider_specific_data).is_some_and(|x| x.id == want))?;
@@ -181,7 +250,11 @@ impl<'a> Actuator<'a> {
                     return Ok(Outcome::Aborted("marker mismatch; not retargeting".into()));
                 }
                 self.ledger.update_hold_window(hold_id, *window, *reset_at, *max_until)?;
-                let m = QsHold { id: hold_id.clone(), window: window.as_str().into(), reset_at: *reset_at, prior_active: true };
+                let prev = marker::read(&c.provider_specific_data);
+                let m = QsHold {
+                    id: hold_id.clone(), window: window.as_str().into(), reset_at: *reset_at, prior_active: true,
+                    free_only: prev.as_ref().is_some_and(|p| p.free_only), excluded: prev.map(|p| p.excluded).unwrap_or_default(),
+                };
                 // Marker-only write. isActive is deliberately NOT part of the body.
                 let body = json!({"providerSpecificData": {marker::KEY: marker::to_value(&m)}});
                 let (hid, w) = (hold_id.clone(), window.as_str().to_string());
@@ -211,12 +284,16 @@ impl<'a> Actuator<'a> {
                     self.log(Some(conn_id), "release", None, m, false, hold_id);
                     return Ok(Outcome::Aborted(m.into()));
                 }
-                let body = if *reenable {
+                // A free-only hold never disabled the connection: release removes only the exclusions it added.
+                let free_hold = mk.as_ref().is_some_and(|m| m.free_only);
+                let body = if free_hold {
+                    json!({"providerSpecificData": {marker::KEY: null, "excludedModels": freeonly::without_ours(&freeonly::excluded_of(&c.provider_specific_data), &mk.as_ref().map(|m| m.excluded.clone()).unwrap_or_default())}})
+                } else if *reenable {
                     json!({"isActive": true, "providerSpecificData": {marker::KEY: null}})
                 } else {
                     json!({"providerSpecificData": {marker::KEY: null}})
                 };
-                let re = *reenable;
+                let re = *reenable && !free_hold;
                 let done = self.write_verified(conn_id, &body, move |c| marker::read(&c.provider_specific_data).is_none() && (!re || c.is_active))?;
                 if done {
                     self.ledger.release_hold(hold_id, self.now, reason)?;
@@ -230,17 +307,33 @@ impl<'a> Actuator<'a> {
                 self.ledger.release_hold(hold_id, self.now, "manual override")?;
                 self.ledger.set_override(conn_id, *until, reason)?;
                 if self.is_live(conn_id) {
-                    let _ = self.gw.patch_connection(conn_id, &json!({"providerSpecificData": {marker::KEY: null}}));
+                    let _ = self.gw.patch_connection(conn_id, &self.clear_body(conn_id));
                 }
                 self.log(Some(conn_id), "manual_override", None, reason, true, &until.to_rfc3339());
                 Ok(Outcome::Applied)
+            }
+            Action::Reconcile { hold_id, conn_id } => {
+                if !self.is_live(conn_id) {
+                    self.log(Some(conn_id), "reconcile", None, "shadow", false, hold_id);
+                    return Ok(Outcome::Shadow);
+                }
+                let Some(c) = self.read(conn_id)? else { return Ok(Outcome::Aborted("connection vanished".into())) };
+                let Some(m) = marker::read(&c.provider_specific_data).filter(|m| &m.id == hold_id && m.free_only) else {
+                    return Ok(Outcome::Aborted("marker mismatch; not reconciling".into()));
+                };
+                let (body, ours) = self.free_only_body(&c, &m)?;
+                let done = self.write_verified(conn_id, &body, move |c| {
+                    freeonly::excluded_of(&c.provider_specific_data).iter().collect::<std::collections::BTreeSet<_>>().is_superset(&ours.iter().collect())
+                })?;
+                self.log(Some(conn_id), "reconcile", None, "extended paid-model exclusions after a model sync", done, hold_id);
+                Ok(if done { Outcome::Applied } else { Outcome::Failed("not confirmed".into()) })
             }
             Action::ClearMarker { conn_id } => {
                 if !self.is_live(conn_id) {
                     self.log(Some(conn_id), "clear_marker", None, "orphan marker", false, "shadow");
                     return Ok(Outcome::Shadow);
                 }
-                let done = self.write_verified(conn_id, &json!({"providerSpecificData": {marker::KEY: null}}), |c| marker::read(&c.provider_specific_data).is_none())?;
+                let done = self.write_verified(conn_id, &self.clear_body(conn_id), |c| marker::read(&c.provider_specific_data).is_none())?;
                 self.log(Some(conn_id), "clear_marker", None, "orphan marker", done, "");
                 Ok(if done { Outcome::Applied } else { Outcome::Failed("not confirmed".into()) })
             }
@@ -251,7 +344,8 @@ impl<'a> Actuator<'a> {
 fn action_conn(a: &Action) -> Option<&str> {
     match a {
         Action::Hold { conn_id, .. } | Action::Retarget { conn_id, .. } | Action::Release { conn_id, .. }
-        | Action::ManualOverride { conn_id, .. } | Action::ResumeApply { conn_id, .. } | Action::ClearMarker { conn_id } => Some(conn_id),
+        | Action::ManualOverride { conn_id, .. } | Action::ResumeApply { conn_id, .. } | Action::ClearMarker { conn_id }
+        | Action::Reconcile { conn_id, .. } => Some(conn_id),
         Action::Alert { conn_id, .. } => conn_id.as_deref(),
     }
 }
@@ -263,6 +357,7 @@ fn action_name(a: &Action) -> &'static str {
         Action::ManualOverride { .. } => "manual_override",
         Action::ResumeApply { .. } => "resume",
         Action::ClearMarker { .. } => "clear_marker",
+        Action::Reconcile { .. } => "reconcile",
         Action::Alert { .. } => "alert",
     }
 }
@@ -288,7 +383,7 @@ mod tests {
         Action::Hold { conn_id: "c1".into(), subscription: "claude".into(), window: WindowKind::Weekly, reset_at: Some(now() + Duration::hours(30)), max_until: now() + Duration::hours(40), predicted: false, reason: "t".into() }
     }
     fn act<'a>(g: &'a FakeGateway, l: &'a Ledger, m: &'a BTreeMap<String, (String, bool)>, paused: bool) -> Actuator<'a> {
-        Actuator { gw: g, ledger: l, now: now(), live: m, paused, pause_file: None, tick: 1 }
+        Actuator { gw: g, ledger: l, now: now(), live: m, paused, pause_file: None, tick: 1, free: FreeOnly::none() }
     }
 
     #[test]
@@ -461,7 +556,7 @@ mod tests {
         m.insert("c2".to_string(), ("claude".to_string(), true));
         let d = tempfile::tempdir().unwrap();
         let pf = d.path().join("PAUSE");
-        let a = Actuator { gw: &g, ledger: &l, now: now(), live: &m, paused: false, pause_file: Some(pf.clone()), tick: 1 };
+        let a = Actuator { gw: &g, ledger: &l, now: now(), live: &m, paused: false, pause_file: Some(pf.clone()), tick: 1, free: FreeOnly::none() };
         let h1 = hold_action();
         let mut h2 = hold_action();
         if let Action::Hold { conn_id, .. } = &mut h2 { *conn_id = "c2".into(); }

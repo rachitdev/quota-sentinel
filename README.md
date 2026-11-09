@@ -99,6 +99,29 @@ Each vendor enforces disjoint, opaque rolling windows: **5-hour session blocks**
 
 ---
 
+## 🆓 Free-Only Holds (keep quota-free models usable)
+
+A normal hold sets `isActive=false`, which also removes the provider's **quota-free** models. For subscriptions that ship free models next to a metered pool (OpenCode Go), a *free-only* hold blocks just the paid ones:
+
+```toml
+# ~/.dsh/etc/quota-sentinel.toml
+free_only_subscriptions = ["opencode-go"]   # held by blocking paid models only
+free_model_patterns     = ["*-free"]        # `*` / `?` wildcards; matches are never blocked
+```
+
+How it works:
+
+1. At the threshold Sentinel reads the connection's model list (`GET /api/providers/<id>/models`) and writes every non-free id, plus `<id>-*` effort variants, into `providerSpecificData.excludedModels`. The connection stays **active**.
+2. The ownership marker records `freeOnly: true` and the exact patterns added, so release removes **only Sentinel's own** exclusions and keeps any you set by hand.
+3. Models synced after the hold was placed are added on the next tick (`reconcile`).
+4. If the model list is unavailable or empty, Sentinel writes nothing and retries next tick. It never guesses a partial block.
+
+Why not simply exclude by hand: OmniRoute exclusion patterns have no negation, and a paid request that reaches the upstream after the pool is exhausted returns 429, which puts the **whole** connection into cooldown (free models included). Excluded models are rejected locally, so that request never leaves the machine.
+
+Other subscriptions keep the full `isActive=false` hold.
+
+---
+
 ## 📊 Live Deployment Status
 
 As of `v0.1.0`, Quota Sentinel operates with strict staged gating:

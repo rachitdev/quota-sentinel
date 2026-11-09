@@ -19,6 +19,8 @@ pub struct ConnInput {
     pub unavailable: Option<String>,
     /// Burn rate in percentage points per minute, by window, from the ledger (positive only).
     pub burn: BTreeMap<WindowKind, f64>,
+    /// Free-only hold whose exclusion list no longer covers every paid model (for example after a model sync).
+    pub reconcile: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +63,8 @@ pub enum Action {
     /// Intent was logged but marker/disable were not verified (crash window): redo idempotently.
     ResumeApply { hold_id: String, conn_id: String },
     ClearMarker { conn_id: String },
+    /// Free-only hold: extend the exclusion list to paid models that appeared since the hold was placed.
+    Reconcile { hold_id: String, conn_id: String },
     Alert { kind: AlertKind, conn_id: Option<String>, message: String },
 }
 
@@ -250,7 +254,7 @@ pub fn decide(inp: &PolicyInput) -> Vec<Action> {
 
         if let Some(h) = hold {
             held_conns.push(id);
-            decide_with_hold(c, h, marker.as_ref().map(|m| m.id.as_str()), &ev, now, th, &mut out, &mut alerts);
+            decide_with_hold(c, h, marker.as_ref().map(|m| m.id.as_str()), marker.as_ref().is_some_and(|m| m.free_only), &ev, now, th, &mut out, &mut alerts);
         } else {
             decide_without_hold(c, marker.is_some(), &ev, inp.overrides.get(id).copied(), now, th, &mut out, &mut alerts);
             if out.iter().any(|a| matches!(a, Action::Hold { conn_id, .. } if conn_id == id)) {
@@ -277,7 +281,7 @@ pub fn decide(inp: &PolicyInput) -> Vec<Action> {
 
 #[allow(clippy::too_many_arguments)]
 fn decide_with_hold(
-    c: &ConnInput, h: &HoldRow, marker_id: Option<&str>, ev: &BTreeMap<WindowKind, Eval>, now: DateTime<Utc>,
+    c: &ConnInput, h: &HoldRow, marker_id: Option<&str>, free_only: bool, ev: &BTreeMap<WindowKind, Eval>, now: DateTime<Utc>,
     th: &Thresholds, out: &mut Vec<Action>, alerts: &mut Vec<Action>,
 ) {
     let conn_id = c.conn.id.clone();
@@ -318,7 +322,7 @@ fn decide_with_hold(
         }
         return;
     }
-    if c.conn.is_active {
+    if c.conn.is_active && !free_only {
         out.push(Action::ManualOverride {
             hold_id: h.id.clone(),
             conn_id: conn_id.clone(),
@@ -331,6 +335,9 @@ fn decide_with_hold(
     if marker_id != Some(h.id.as_str()) {
         alerts.push(Action::Alert { kind: AlertKind::MarkerMismatch, conn_id: Some(conn_id), message: "ownership marker missing or different; treating as foreign, will not restore".into() });
         return;
+    }
+    if free_only && c.reconcile && c.conn.is_active {
+        out.push(Action::Reconcile { hold_id: h.id.clone(), conn_id: conn_id.clone() });
     }
     if now > h.max_until {
         alerts.push(Action::Alert { kind: AlertKind::HoldExpired, conn_id: Some(conn_id.clone()), message: format!("{} hold exceeded its maximum duration; needs attention", c.subscription) });
@@ -463,7 +470,7 @@ mod tests {
         }
     }
     fn ci(active: bool, psd: serde_json::Value, obs: Vec<WindowObs>) -> ConnInput {
-        ConnInput { conn: conn("c1", active, psd), subscription: "claude".into(), obs, unavailable: None, burn: BTreeMap::new() }
+        ConnInput { conn: conn("c1", active, psd), subscription: "claude".into(), obs, unavailable: None, burn: BTreeMap::new(), reconcile: false }
     }
     fn marker_psd(id: &str) -> serde_json::Value {
         json!({"qsHold": {"id": id, "window": "weekly", "resetAt": null, "priorActive": true}})

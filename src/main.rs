@@ -1,5 +1,6 @@
 mod actuator;
 mod config;
+mod freeonly;
 mod gateway;
 mod ledger;
 mod mail;
@@ -91,7 +92,7 @@ fn main() -> Result<()> {
             let act = policy::Action::Release { hold_id: h.id.clone(), conn_id: h.connection_id.clone(), reenable: h.prior_active, reason: "operator release".into() };
             let tick = l.start_tick(Utc::now(), "release")?;
             // An explicit operator command: not gated by `enabled`/live list, but PAUSE still freezes it.
-            let a = actuator::Actuator { gw: &gw, ledger: &l, now: Utc::now(), live: &live, paused: false, pause_file: Some(tick::pause_file(&cfg)), tick };
+            let a = actuator::Actuator { gw: &gw, ledger: &l, now: Utc::now(), live: &live, paused: false, pause_file: Some(tick::pause_file(&cfg)), tick, free: cfg.free_only() };
             let r = a.apply_all(&[act]);
             l.finish_tick(tick, Utc::now(), true, "operator release")?;
             println!("{:?}", r[0].1);

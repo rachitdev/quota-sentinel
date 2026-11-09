@@ -8,6 +8,8 @@ pub trait Gateway {
     fn connections(&self) -> Result<Vec<Value>>;
     fn connection(&self, id: &str) -> Result<Option<Value>>;
     fn usage(&self, id: &str) -> Result<Value>;
+    /// Model ids the connection currently serves (GET /api/providers/<id>/models).
+    fn models(&self, id: &str) -> Result<Vec<String>>;
     /// PATCH /api/providers/<id>. Callers send ONLY `isActive` and/or `providerSpecificData.qsHold`.
     fn patch_connection(&self, id: &str, body: &Value) -> Result<()>;
 }
@@ -94,6 +96,14 @@ impl Gateway for HttpGateway {
         bail!("GET usage {id} -> {c}")
     }
 
+    fn models(&self, id: &str) -> Result<Vec<String>> {
+        let (c, v) = self.get(&format!("/api/providers/{id}/models"))?;
+        if c != 200 {
+            bail!("GET models {id} -> {c}");
+        }
+        Ok(v.get("models").and_then(|m| m.as_array()).map(|a| a.iter().filter_map(|m| m.get("id")?.as_str().map(String::from)).collect()).unwrap_or_default())
+    }
+
     fn patch_connection(&self, id: &str, body: &Value) -> Result<()> {
         let mut r = self
             .agent
@@ -121,6 +131,7 @@ pub mod fake {
     pub struct FakeGateway {
         pub conns: RefCell<BTreeMap<String, Value>>,
         pub usage: RefCell<BTreeMap<String, Value>>,
+        pub models: RefCell<BTreeMap<String, Vec<String>>>,
         pub patches: RefCell<Vec<(String, Value)>>,
         /// next PATCH fails and is NOT applied
         pub fail_patch: RefCell<bool>,
@@ -168,6 +179,9 @@ pub mod fake {
         }
         fn usage(&self, id: &str) -> Result<Value> {
             self.usage.borrow().get(id).cloned().ok_or_else(|| anyhow!("no usage"))
+        }
+        fn models(&self, id: &str) -> Result<Vec<String>> {
+            self.models.borrow().get(id).cloned().ok_or_else(|| anyhow!("no models"))
         }
         fn patch_connection(&self, id: &str, body: &Value) -> Result<()> {
             self.patches.borrow_mut().push((id.into(), body.clone()));

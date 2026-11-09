@@ -59,6 +59,10 @@ pub struct Config {
     pub mail_from: String,
     pub mail_to: String,
     pub thresholds: Thresholds,
+    /// Subscriptions held by blocking only their PAID models (connection stays active so free models keep working).
+    pub free_only_subscriptions: Vec<String>,
+    /// Model-id wildcards (`*`, `?`) that identify quota-free models on a free-only subscription.
+    pub free_model_patterns: Vec<String>,
     /// gateway provider id -> subscription name. Providers not listed are never managed (free/local rungs).
     pub subscriptions: BTreeMap<String, String>,
 }
@@ -88,6 +92,8 @@ impl Default for Config {
             mail_from: "DSH <onboarding@resend.dev>".into(),
             mail_to: "rachit.dev@gmail.com".into(),
             thresholds: Thresholds::default(),
+            free_only_subscriptions: vec![],
+            free_model_patterns: vec!["*-free".into()],
             subscriptions: subs,
         }
     }
@@ -116,6 +122,9 @@ impl Config {
     }
     pub fn subscription_of(&self, provider: &str) -> Option<&str> {
         self.subscriptions.get(provider).map(String::as_str)
+    }
+    pub fn free_only(&self) -> crate::freeonly::FreeOnly<'_> {
+        crate::freeonly::FreeOnly { subs: &self.free_only_subscriptions, patterns: &self.free_model_patterns }
     }
     pub fn is_live(&self, subscription: &str, connection_id: &str) -> bool {
         self.enabled

@@ -14,6 +14,12 @@ pub struct QsHold {
     pub window: String,
     pub reset_at: Option<DateTime<Utc>>,
     pub prior_active: bool,
+    /// Free-only hold: the connection stays active; the paid models in `excluded` are blocked instead.
+    #[serde(default)]
+    pub free_only: bool,
+    /// Exclusion patterns this hold added to `excludedModels` (removed again on release).
+    #[serde(default)]
+    pub excluded: Vec<String>,
 }
 
 pub fn read(psd: &Value) -> Option<QsHold> {

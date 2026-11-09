@@ -47,6 +47,19 @@ fn burn_rates(ledger: &Ledger, conn: &str, now: DateTime<Utc>) -> BTreeMap<Windo
     m
 }
 
+/// A free-only hold whose exclusion list misses paid models that were synced after the hold was placed.
+fn needs_reconcile(cfg: &Config, gw: &dyn Gateway, c: &Conn, sub: &str) -> bool {
+    let Some(m) = crate::marker::read(&c.provider_specific_data).filter(|m| m.free_only) else { return false };
+    if !c.is_active || !cfg.free_only().applies(sub) {
+        return false;
+    }
+    let Ok(models) = gw.models(&c.id) else { return false };
+    let want = crate::freeonly::paid_exclusions(&models, &cfg.free_model_patterns);
+    let have = crate::freeonly::excluded_of(&c.provider_specific_data);
+    let _ = m;
+    want.iter().any(|w| !have.contains(w))
+}
+
 pub fn run_tick(cfg: &Config, gw: &dyn Gateway, ledger: &Ledger, now: DateTime<Utc>) -> Result<TickReport> {
     let paused = pause_file(cfg).exists();
     let mode = if paused { "paused" } else if cfg.enabled { "live" } else { "shadow" };
@@ -75,7 +88,8 @@ pub fn run_tick(cfg: &Config, gw: &dyn Gateway, ledger: &Ledger, now: DateTime<U
         for o in &obs {
             ledger.record_obs(now, o)?;
         }
-        inputs.push(ConnInput { burn: burn_rates(ledger, &c.id, now), conn: c, subscription: sub, obs, unavailable });
+        let reconcile = needs_reconcile(cfg, gw, &c, &sub);
+        inputs.push(ConnInput { burn: burn_rates(ledger, &c.id, now), conn: c, subscription: sub, obs, unavailable, reconcile });
     }
 
     let holds = ledger.open_holds()?;
@@ -86,10 +100,80 @@ pub fn run_tick(cfg: &Config, gw: &dyn Gateway, ledger: &Ledger, now: DateTime<U
         }
     }
     let actions = decide(&PolicyInput { now, th: &cfg.thresholds, conns: &inputs, holds: &holds, overrides: &overrides });
-    rep.results = Actuator { gw, ledger, now, live: &live, paused, pause_file: Some(pause_file(cfg)), tick }.apply_all(&actions);
+    rep.results = Actuator { gw, ledger, now, live: &live, paused, pause_file: Some(pause_file(cfg)), tick, free: cfg.free_only() }.apply_all(&actions);
     let failed = rep.results.iter().filter(|(_, o)| matches!(o, Outcome::Failed(_))).count();
     ledger.finish_tick(tick, Utc::now(), failed == 0 && rep.probe_errors.is_empty(), &format!("managed={} actions={} failed={failed}", rep.managed, rep.results.len()))?;
+    let _ = export_status(cfg, ledger, &rep, now, &inputs);
     Ok(rep)
+}
+
+fn export_status(cfg: &Config, ledger: &Ledger, rep: &TickReport, now: DateTime<Utc>, inputs: &[ConnInput]) -> Result<()> {
+    let holds = ledger.open_holds().unwrap_or_default();
+    let held_subs: Vec<String> = {
+        let mut s: Vec<_> = holds.iter().map(|h| h.subscription.clone()).collect();
+        s.sort();
+        s.dedup();
+        s
+    };
+
+    let mut quotas_map = serde_json::Map::new();
+    for input in inputs {
+        let mut win_map = serde_json::Map::new();
+        for obs in &input.obs {
+            win_map.insert(obs.kind.as_str().to_string(), serde_json::json!({
+                "usedPct": (obs.used_pct * 10.0).round() / 10.0,
+                "resetAt": obs.reset_at.map(|d| d.to_rfc3339()),
+            }));
+        }
+        quotas_map.insert(input.subscription.clone(), serde_json::Value::Object(win_map));
+    }
+
+    let status = serde_json::json!({
+        "generated_at_epoch": now.timestamp(),
+        "generated_at": now.to_rfc3339(),
+        "mode": rep.mode,
+        "enabled": cfg.enabled,
+        "live_subscriptions": cfg.live_subscriptions,
+        "live_connections": cfg.live_connections,
+        "open_holds_count": holds.len(),
+        "held_subscriptions": held_subs,
+        "open_holds": holds.iter().map(|h| serde_json::json!({
+            "id": h.id,
+            "subscription": h.subscription,
+            "connectionId": h.connection_id,
+            "window": h.window.as_str(),
+            "resetAt": h.reset_at.map(|d| d.to_rfc3339()),
+            "maxUntil": h.max_until.to_rfc3339(),
+            "reason": h.reason,
+            "applied": h.applied,
+        })).collect::<Vec<_>>(),
+        "last_tick": {
+            "tick": rep.tick_id,
+            "mode": rep.mode,
+            "managed": rep.managed,
+            "probeErrors": rep.probe_errors.len(),
+            "actions": rep.results.len(),
+        },
+        "quotas": quotas_map,
+    });
+
+    let json_bytes = serde_json::to_vec_pretty(&status)?;
+
+    let destinations = [
+        cfg.state_path().join("status.json"),
+        crate::config::expand("~/.dsh/run/quota-sentinel.json"),
+    ];
+
+    for dest in &destinations {
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = dest.with_extension(format!("tmp.{}", std::process::id()));
+        if std::fs::write(&tmp, &json_bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, dest);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -223,6 +307,105 @@ mod tests {
         assert_eq!(r.mode, "paused");
         assert!(g.patches.borrow().is_empty());
     }
+    fn free_only_cfg() -> Config {
+        let mut c = cfg(true);
+        c.free_only_subscriptions = vec!["claude".into()];
+        c
+    }
+    fn paid_and_free() -> Vec<String> {
+        ["deepseek-v4.1-flash", "glm-5.2", "crouton-alpha-free", "iceman-contributor-free"].iter().map(|x| x.to_string()).collect()
+    }
+    fn excluded(g: &FakeGateway) -> Vec<String> {
+        crate::freeonly::excluded_of(&g.get("c1")["providerSpecificData"])
+    }
+
+    #[test]
+    fn free_only_hold_blocks_paid_models_and_keeps_connection_active() {
+        let (g, l) = rig();
+        g.models.borrow_mut().insert("c1".into(), paid_and_free());
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000));
+        run_tick(&free_only_cfg(), &g, &l, now()).unwrap();
+        assert_eq!(g.get("c1")["isActive"], json!(true), "free models must stay routable");
+        let ex = excluded(&g);
+        for paid in ["deepseek-v4.1-flash", "glm-5.2", "glm-5.2-high"] {
+            assert!(ex.iter().any(|p| crate::freeonly::wildcard(paid, p)), "{paid} not blocked");
+        }
+        for free in ["crouton-alpha-free", "iceman-contributor-free"] {
+            assert!(!ex.iter().any(|p| crate::freeonly::wildcard(free, p)), "{free} was blocked");
+        }
+        assert_eq!(l.open_holds().unwrap().len(), 1);
+        assert!(crate::marker::read(&g.get("c1")["providerSpecificData"]).unwrap().free_only);
+    }
+
+    #[test]
+    fn free_only_hold_is_idempotent_and_not_mistaken_for_a_manual_reenable() {
+        let (g, l) = rig();
+        g.models.borrow_mut().insert("c1".into(), paid_and_free());
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000));
+        let c = free_only_cfg();
+        run_tick(&c, &g, &l, now()).unwrap();
+        let n = g.patches.borrow().len();
+        let r = run_tick(&c, &g, &l, now() + Duration::minutes(15)).unwrap();
+        assert_eq!(g.patches.borrow().len(), n, "second tick must not write");
+        assert!(r.results.iter().all(|(a, _)| !matches!(a, Action::ManualOverride { .. })), "active free-only connection is not an override");
+        assert_eq!(l.open_holds().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn free_only_release_removes_only_our_exclusions_and_keeps_the_users() {
+        let (g, l) = rig();
+        g.models.borrow_mut().insert("c1".into(), paid_and_free());
+        g.conns.borrow_mut().get_mut("c1").unwrap()["providerSpecificData"]["excludedModels"] = json!(["my-own-block"]);
+        let c = free_only_cfg();
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 120));
+        run_tick(&c, &g, &l, now()).unwrap();
+        assert!(excluded(&g).contains(&"my-own-block".to_string()) && excluded(&g).contains(&"glm-5.2".to_string()));
+        let later = now() + Duration::minutes(200);
+        let fresh = json!({"quotas": {
+            "session (5h)": {"used": 1, "total": 100, "remainingPercentage": 99, "resetAt": (later+Duration::hours(4)).to_rfc3339(), "observedAt": later.to_rfc3339()},
+            "weekly (7d)": {"used": 2, "total": 100, "remainingPercentage": 98, "resetAt": (later+Duration::days(6)).to_rfc3339(), "observedAt": later.to_rfc3339()}}});
+        g.usage.borrow_mut().insert("c1".into(), fresh);
+        run_tick(&c, &g, &l, later).unwrap();
+        assert_eq!(excluded(&g), vec!["my-own-block".to_string()]);
+        assert!(crate::marker::read(&g.get("c1")["providerSpecificData"]).is_none());
+        assert_eq!(g.get("c1")["isActive"], json!(true));
+        assert!(l.open_holds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn free_only_hold_extends_to_models_synced_after_it_was_placed() {
+        let (g, l) = rig();
+        g.models.borrow_mut().insert("c1".into(), paid_and_free());
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000));
+        let c = free_only_cfg();
+        run_tick(&c, &g, &l, now()).unwrap();
+        g.models.borrow_mut().get_mut("c1").unwrap().push("kimi-k9".into());
+        run_tick(&c, &g, &l, now() + Duration::minutes(15)).unwrap();
+        assert!(excluded(&g).iter().any(|p| crate::freeonly::wildcard("kimi-k9", p)), "new paid model must be blocked");
+        assert_eq!(l.open_holds().unwrap().len(), 1);
+        assert_eq!(g.get("c1")["isActive"], json!(true));
+    }
+
+    #[test]
+    fn free_only_hold_refuses_to_guess_when_the_model_list_is_unavailable() {
+        let (g, l) = rig();
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000)); // no models registered => models() errors
+        let r = run_tick(&free_only_cfg(), &g, &l, now()).unwrap();
+        assert!(r.results.iter().any(|(a, o)| matches!(a, Action::Hold { .. }) && matches!(o, Outcome::Failed(_))));
+        assert!(excluded(&g).is_empty(), "no partial block");
+        assert_eq!(g.get("c1")["isActive"], json!(true));
+    }
+
+    #[test]
+    fn other_subscriptions_still_use_the_full_disable() {
+        let (g, l) = rig();
+        g.usage.borrow_mut().insert("c1".into(), usage(95.0, 3000));
+        let mut c = cfg(true);
+        c.free_only_subscriptions = vec!["opencode-go".into()];
+        run_tick(&c, &g, &l, now()).unwrap();
+        assert_eq!(g.get("c1")["isActive"], json!(false));
+    }
+
     #[test]
     fn lock_is_exclusive() {
         let c = cfg(false);
