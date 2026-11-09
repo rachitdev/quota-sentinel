@@ -104,11 +104,12 @@ export function apply(ctx, config = {}) {
 
   log(`quota-sentinel plugin applied (binary=${binaryPath}, autoTick=${autoTick}, interval=${intervalMin}m)`);
 
-  ctx.quotaSentinel = {
+  // Cordis forbids assigning undeclared properties on ctx; declare the service first.
+  ctx.provide('quotaSentinel', {
     runTick: () => runTick(binaryPath),
     runReport: () => runReport(binaryPath),
     getBinaryPath: () => binaryPath,
-  };
+  });
 
   if (autoTick) {
     let lastTickTime = 0;
@@ -167,7 +168,8 @@ export function apply(ctx, config = {}) {
   }
 
   // Register native tool on ctx.tools if available
-  const tools = ctx.get('tools');
+  let tools;
+  try { tools = ctx.get('tools'); } catch { tools = undefined; }
   if (tools && typeof tools.register === 'function') {
     ctx.effect(() => tools.register({
       name: 'quota_sentinel_tick',
